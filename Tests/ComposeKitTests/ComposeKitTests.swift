@@ -2,6 +2,7 @@ import Foundation
 import Testing
 
 @testable import ComposeKit
+@testable import ComposeKitContainer
 
 private func loadFixture() throws -> Project {
     let url = Bundle.module.url(forResource: "compose", withExtension: "yaml", subdirectory: "Fixtures")!
@@ -80,8 +81,8 @@ struct PlanningTests {
 
 @Suite("Translation")
 struct TranslationTests {
-    private func translator() -> Translator {
-        Translator(project: "demo", baseDirectory: URL(fileURLWithPath: "/proj"), hostEnv: [:])
+    private func translator() -> ContainerTranslator {
+        ContainerTranslator(project: "demo", baseDirectory: URL(fileURLWithPath: "/proj"), hostEnv: [:])
     }
 
     @Test("run args carry name, labels, network, ports")
@@ -220,6 +221,100 @@ struct HealthTests {
             """
         let file = try ComposeFile.parse(yaml: yaml)
         #expect(file.services["web"]?.depends_on?.condition(for: "db") == "service_healthy")
+    }
+}
+
+@Suite("Corpus")
+struct CorpusTests {
+    /// Every spec-valid file in Fixtures/corpus must parse (this mirrors the CI
+    /// schema-validation + docker-parity jobs: "ComposeKit accepts what the spec
+    /// and docker accept").
+    @Test("all corpus files parse")
+    func parsesAll() throws {
+        let dir =
+            Bundle.module
+            .url(forResource: "compose", withExtension: "yaml", subdirectory: "Fixtures")!
+            .deletingLastPathComponent()
+            .appendingPathComponent("corpus")
+        let files = try FileManager.default
+            .contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "yaml" }
+        #expect(!files.isEmpty)
+        for url in files {
+            let project = try Project.load(explicit: url.path, projectName: nil, cwd: dir)
+            #expect(!project.file.services.isEmpty, "\(url.lastPathComponent) had no services")
+        }
+    }
+}
+
+@Suite("Profiles")
+struct ProfileTests {
+    /// app (no profile) + db (no profile); adminer/debug-shell are gated.
+    private func services() throws -> [String: Service] {
+        let url = Bundle.module.url(
+            forResource: "profiles", withExtension: "yaml", subdirectory: "Fixtures/corpus")!
+        return try ComposeFile.parse(yaml: String(contentsOf: url, encoding: .utf8)).services
+    }
+
+    @Test("no active profile enables only unprofiled services")
+    func noProfile() throws {
+        let enabled = Profiles.enabled(services: try services(), active: [])
+        #expect(enabled == ["app", "db"])
+    }
+
+    @Test("active profile pulls in its services and their deps")
+    func activeProfile() throws {
+        let enabled = Profiles.enabled(services: try services(), active: ["tools"])
+        // adminer joins, and its depends_on db; app/db stay (unprofiled).
+        #expect(enabled == ["app", "db", "adminer"])
+    }
+
+    @Test("explicitly naming a profiled service enables it without the profile")
+    func explicitOverridesProfile() throws {
+        let enabled = Profiles.enabled(
+            services: try services(), active: [], explicit: ["adminer"])
+        // adminer + its dep db; app is not pulled in by an explicit selection.
+        #expect(enabled == ["adminer", "db"])
+    }
+
+    @Test("COMPOSE_PROFILES is parsed into active profiles")
+    func composeProfilesEnv() {
+        let active = Project.resolveProfiles(
+            flags: ["x"], variables: ["COMPOSE_PROFILES": "tools, debug"])
+        #expect(active == ["x", "tools", "debug"])
+    }
+}
+
+@Suite("New-field translation")
+struct NewFieldTests {
+    private func worker() throws -> Service {
+        let url = Bundle.module.url(
+            forResource: "resources", withExtension: "yaml", subdirectory: "Fixtures/corpus")!
+        return try ComposeFile.parse(yaml: String(contentsOf: url, encoding: .utf8))
+            .services["worker"]!
+    }
+
+    @Test("ulimits, shm_size, dns, runtime, tty translate to container flags")
+    func translates() throws {
+        let t = ContainerTranslator(
+            project: "p", baseDirectory: URL(fileURLWithPath: "/p"), hostEnv: [:])
+        let args = t.runArgs(service: "worker", try worker(), image: "app:latest")
+        #expect(adjacent(args, "--ulimit", "nofile=1024:524288"))
+        #expect(adjacent(args, "--ulimit", "nproc=65535"))
+        #expect(adjacent(args, "--shm-size", "128m"))
+        #expect(adjacent(args, "--runtime", "runc"))
+        #expect(adjacent(args, "--dns-search", "corp.example.com"))
+        #expect(adjacent(args, "--dns-option", "timeout:2"))
+        #expect(args.contains("--interactive"))
+        #expect(args.contains("--tty"))
+    }
+
+    @Test("extra_hosts normalizes list and map forms to host:ip")
+    func extraHosts() {
+        #expect(ExtraHosts.list(["a:1.1.1.1"]).entries == ["a:1.1.1.1"])
+        #expect(
+            ExtraHosts.map(["b": ComposeScalar("2.2.2.2"), "a": ComposeScalar("1.1.1.1")]).entries
+                == ["a:1.1.1.1", "b:2.2.2.2"])
     }
 }
 

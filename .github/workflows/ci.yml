@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Baseline: build + the full test suite (parsing, planning, profiles,
+  # translation, and the corpus-parses-everything test). macOS only — this is a
+  # macOS/Apple-`container` project, so the Swift build isn't matrixed on Linux.
+  test-macos:
+    name: Test (macOS)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - run: swift build
+      - run: swift test
+
+  # Interop layer 1 — spec conformance: every fixture must validate against the
+  # official compose-spec JSON Schema (vendored under Schema/).
+  schema-validation:
+    name: Schema validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install check-jsonschema
+      - name: Validate fixtures against compose-spec schema
+        run: |
+          check-jsonschema --schemafile Schema/compose-spec.json \
+            Tests/ComposeKitTests/Fixtures/compose.yaml \
+            Tests/ComposeKitTests/Fixtures/corpus/*.yaml
+
+  # Interop layer 2 — parse parity: docker's canonical normalizer and ComposeKit
+  # must both accept the same files. (container itself can't run in CI.)
+  docker-parity:
+    name: docker compose parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.0"
+      - run: docker compose version
+      - run: swift build -c release --product compose-validate
+      - name: Parse parity (docker config vs compose-validate)
+        run: Scripts/parity.sh .build/release/compose-validate

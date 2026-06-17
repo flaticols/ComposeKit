@@ -1,0 +1,32 @@
+# Alternate spec-valid shapes for polymorphic fields. docker accepts all of
+# these, so ComposeKit must too — declaring a field with too strict a decoder
+# would reject files docker takes. This file makes the parity job earn its keep.
+name: edge
+services:
+  a:
+    image: x
+    # ulimit values may be strings, not just integers.
+    ulimits:
+      nofile: "65535"
+      nproc:
+        soft: "1024"
+        hard: "2048"
+    # devices long-form (object) instead of "src:dst" string.
+    devices:
+      - source: "/dev/snd"
+        target: "/dev/snd"
+    # extra_hosts map form instead of "host:ip" list.
+    extra_hosts:
+      host.docker.internal: host-gateway
+    # sysctls list form instead of map.
+    sysctls:
+      - net.ipv4.tcp_syncookies=1
+    # dns_search scalar form instead of list.
+    dns_search: corp.example.com
+  b:
+    image: y
+    # gpus list form instead of "all".
+    gpus:
+      - driver: nvidia
+        count: 1
+        capabilities: ["gpu"]

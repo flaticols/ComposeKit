@@ -6,9 +6,10 @@
 // skipped (with a warning emitted by the Orchestrator).
 //===----------------------------------------------------------------------===//
 
+import ComposeKit
 import Foundation
 
-public struct Translator: Sendable {
+public struct ContainerTranslator: Sendable {
     public let project: String
     public let baseDirectory: URL
     public let hostEnv: [String: String]
@@ -109,10 +110,19 @@ public struct Translator: Sendable {
         for cap in svc.cap_add ?? [] { a += ["--cap-add", cap] }
         for cap in svc.cap_drop ?? [] { a += ["--cap-drop", cap] }
         for d in svc.dns?.values ?? [] { a += ["--dns", d] }
+        for s in svc.dns_search?.values ?? [] { a += ["--dns-search", s] }
+        for o in svc.dns_opt ?? [] { a += ["--dns-option", o] }
         for t in svc.tmpfs?.values ?? [] { a += ["--tmpfs", t] }
         if svc.read_only == true { a += ["--read-only"] }
         if svc.`init` == true { a += ["--init"] }
         if let platform = svc.platform { a += ["--platform", platform] }
+        if let runtime = svc.runtime { a += ["--runtime", runtime] }
+        if let shm = svc.shm_size?.stringValue { a += ["--shm-size", shm] }
+        for u in svc.ulimits?.arguments ?? [] { a += ["--ulimit", u] }
+
+        // Interactive session: Compose `stdin_open` -> -i, `tty` -> -t.
+        if svc.stdin_open == true { a += ["--interactive"] }
+        if svc.tty == true { a += ["--tty"] }
 
         // Resource limits (deploy.resources.limits wins, then top-level shorthands).
         if let cpus = svc.deploy?.resources?.limits?.cpus?.stringValue ?? svc.cpus?.stringValue {

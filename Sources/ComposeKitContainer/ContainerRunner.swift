@@ -5,6 +5,7 @@
 // The executable is resolved from $CONTAINER_CLI, else `container` on PATH.
 //===----------------------------------------------------------------------===//
 
+import ComposeKit
 import Foundation
 
 public struct ContainerRunner: Sendable {

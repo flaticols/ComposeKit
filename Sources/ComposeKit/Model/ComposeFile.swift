@@ -11,6 +11,9 @@ import Foundation
 import Yams
 
 public struct ComposeFile: Decodable, Sendable {
+    /// Deprecated and ignored, but still common in the wild — decoded so files
+    /// that carry it don't surprise anyone (Compose itself only warns).
+    public var version: String?
     public var name: String?
     public var services: [String: Service]
     public var networks: [String: NetworkSpec?]?
@@ -51,6 +54,33 @@ public struct Service: Decodable, Sendable {
     public var cpus: ComposeScalar?
     public var mem_limit: String?
     public var healthcheck: Healthcheck?
+
+    // MARK: Popular local-development fields
+
+    /// Service is only started when one of these profiles is active.
+    public var profiles: [String]?
+
+    // Translatable onto `container run` (see ContainerTranslator).
+    public var tty: Bool?
+    public var stdin_open: Bool?
+    public var ulimits: Ulimits?
+    public var shm_size: ComposeScalar?
+    public var dns_search: StringOrList?
+    public var dns_opt: [String]?
+    public var runtime: String?
+
+    // Decoded so files parse, but `container` has no equivalent flag — the
+    // Orchestrator warns when these are set so the gap is visible.
+    public var hostname: String?
+    public var extra_hosts: ExtraHosts?
+    public var network_mode: String?
+    public var devices: [DeviceMapping]?
+    public var sysctls: KeyValuePairs?
+    public var security_opt: [String]?
+    public var stop_signal: String?
+    public var stop_grace_period: ComposeScalar?
+    public var pull_policy: String?
+    public var gpus: GPUs?
 }
 
 /// `depends_on` as a plain list, or a map of `service -> { condition }`.

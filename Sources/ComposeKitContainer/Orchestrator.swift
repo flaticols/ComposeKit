@@ -1,18 +1,19 @@
 //===----------------------------------------------------------------------===//
-// High-level Compose operations, built on Translator + ContainerRunner.
+// High-level Compose operations, built on ContainerTranslator + ContainerRunner.
 //===----------------------------------------------------------------------===//
 
+import ComposeKit
 import Foundation
 
 public struct Orchestrator: Sendable {
     public let project: Project
     public let runner: ContainerRunner
-    public let translator: Translator
+    public let translator: ContainerTranslator
 
     public init(project: Project, runner: ContainerRunner) {
         self.project = project
         self.runner = runner
-        self.translator = Translator(
+        self.translator = ContainerTranslator(
             project: project.name,
             baseDirectory: project.baseDirectory,
             hostEnv: project.variables
@@ -30,7 +31,8 @@ public struct Orchestrator: Sendable {
     // MARK: - up
 
     public func up(build: Bool, only services: [String]) throws {
-        let selected = try select(services)
+        try validate(services)
+        let selected = project.enabledServices(explicit: services)
         try ensureNetworks()
         try ensureVolumes()
 
@@ -161,10 +163,15 @@ public struct Orchestrator: Sendable {
 
     private func select(_ services: [String]) throws -> Set<String> {
         guard !services.isEmpty else { return Set(project.file.services.keys) }
+        try validate(services)
+        return Set(services)
+    }
+
+    /// Throw on any name that isn't a declared service.
+    private func validate(_ services: [String]) throws {
         for s in services where project.file.services[s] == nil {
             throw ComposeError.unknownService(s)
         }
-        return Set(services)
     }
 
     private func ensureNetworks() throws {
@@ -204,6 +211,23 @@ public struct Orchestrator: Sendable {
         }
         if svc.privileged == true {
             warn("service '\(name)': 'privileged' has no container equivalent and is ignored")
+        }
+        // Popular fields `container` cannot express — decoded so the file parses,
+        // but flagged so the gap is visible rather than silently dropped.
+        var ignored: [String] = []
+        if svc.hostname != nil { ignored.append("hostname") }
+        if svc.extra_hosts != nil { ignored.append("extra_hosts") }
+        if svc.network_mode != nil { ignored.append("network_mode") }
+        if svc.devices != nil { ignored.append("devices") }
+        if svc.sysctls != nil { ignored.append("sysctls") }
+        if svc.security_opt != nil { ignored.append("security_opt") }
+        if svc.stop_signal != nil { ignored.append("stop_signal") }
+        if svc.stop_grace_period != nil { ignored.append("stop_grace_period") }
+        if svc.gpus != nil { ignored.append("gpus") }
+        if !ignored.isEmpty {
+            warn("service '\(name)': \(ignored.joined(separator: ", ")) "
+                + "\(ignored.count == 1 ? "has" : "have") no container equivalent and "
+                + "\(ignored.count == 1 ? "is" : "are") ignored")
         }
     }
 }

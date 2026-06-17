@@ -1,0 +1,25 @@
+# Popular fields that `container` cannot express. They must still PARSE (and be
+# accepted by docker compose / the spec schema); ComposeKit warns and ignores
+# them rather than emitting a flag the runtime would reject.
+name: unsupported
+services:
+  app:
+    image: app:latest
+    hostname: app-host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "api.local:10.0.0.5"
+    network_mode: bridge
+    devices:
+      - "/dev/ttyUSB0:/dev/ttyUSB0"
+    sysctls:
+      net.core.somaxconn: 1024
+    security_opt:
+      - "no-new-privileges:true"
+    stop_signal: SIGTERM
+    stop_grace_period: 1m30s
+    pull_policy: missing
+
+  gpu-app:
+    image: cuda:latest
+    gpus: all

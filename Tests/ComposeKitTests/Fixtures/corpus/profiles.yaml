@@ -1,0 +1,32 @@
+# Exercises profile activation: `app` runs by default; `tools` and `debug`
+# services only join when their profile is active.
+name: profiled
+services:
+  app:
+    image: app:latest
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: secret
+
+  # Only with `--profile tools` (or COMPOSE_PROFILES=tools).
+  adminer:
+    image: adminer:latest
+    profiles: ["tools"]
+    ports:
+      - "8081:8080"
+    depends_on:
+      - db
+
+  # Only with `--profile debug`.
+  debug-shell:
+    image: busybox:latest
+    profiles: ["debug"]
+    command: ["sleep", "infinity"]
+    stdin_open: true
+    tty: true

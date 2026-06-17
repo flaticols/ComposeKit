@@ -43,6 +43,28 @@ public struct Project: Sendable {
     /// Variables used for `${VAR}` interpolation and `environment:` pass-through
     /// (`.env` merged with the shell environment, shell winning).
     public let variables: [String: String]
+    /// Profiles activated for this run (`--profile` flags plus COMPOSE_PROFILES).
+    public let activeProfiles: Set<String>
+
+    public init(
+        name: String,
+        file: ComposeFile,
+        baseDirectory: URL,
+        variables: [String: String],
+        activeProfiles: Set<String> = []
+    ) {
+        self.name = name
+        self.file = file
+        self.baseDirectory = baseDirectory
+        self.variables = variables
+        self.activeProfiles = activeProfiles
+    }
+
+    /// Services to operate on, honoring profile activation. Pass services named
+    /// on the command line as `explicit` (empty means "all enabled").
+    public func enabledServices(explicit: [String] = []) -> Set<String> {
+        Profiles.enabled(services: file.services, active: activeProfiles, explicit: explicit)
+    }
 
     public static let candidateFilenames = [
         "compose.yaml", "compose.yml",
@@ -78,7 +100,8 @@ public struct Project: Sendable {
         explicit: String?,
         projectName: String?,
         cwd: URL,
-        envFile: String? = nil
+        envFile: String? = nil,
+        profiles: [String] = []
     ) throws -> Project {
         let url = try locate(explicit: explicit, cwd: cwd)
         let base = url.deletingLastPathComponent()
@@ -89,7 +112,22 @@ public struct Project: Sendable {
         let file = try ComposeFile.parse(yaml: interpolated)
 
         let name = resolveName(override: projectName, file: file, composeURL: url)
-        return Project(name: name, file: file, baseDirectory: base, variables: variables)
+        let active = resolveProfiles(flags: profiles, variables: variables)
+        return Project(
+            name: name, file: file, baseDirectory: base,
+            variables: variables, activeProfiles: active)
+    }
+
+    /// Active profiles: `--profile` flags plus a comma-separated COMPOSE_PROFILES.
+    static func resolveProfiles(flags: [String], variables: [String: String]) -> Set<String> {
+        var set = Set(flags)
+        if let env = variables["COMPOSE_PROFILES"] {
+            for p in env.split(separator: ",") {
+                let trimmed = p.trimmingCharacters(in: .whitespaces)
+                if !trimmed.isEmpty { set.insert(trimmed) }
+            }
+        }
+        return set
     }
 
     /// `.env` (next to the Compose file, or the explicit `--env-file`) merged

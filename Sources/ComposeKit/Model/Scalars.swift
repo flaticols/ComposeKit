@@ -125,6 +125,107 @@ public struct AnyConfig: Decodable, Sendable, Equatable {
     public init(from decoder: Decoder) throws {}
 }
 
+/// `ulimits` entry: either a single hard limit (`nofile: 65535`) or a
+/// `{soft, hard}` pair. Rendered as `name=value` or `name=soft:hard`.
+public enum ULimitValue: Decodable, Sendable, Equatable {
+    case single(String)
+    case range(soft: String, hard: String)
+
+    private enum CodingKeys: String, CodingKey { case soft, hard }
+
+    public init(from decoder: Decoder) throws {
+        // The spec allows integer OR string for each limit, so normalize via
+        // ComposeScalar rather than insisting on Int (docker accepts both).
+        if let c = try? decoder.singleValueContainer(), let s = try? c.decode(ComposeScalar.self) {
+            self = .single(s.stringValue)
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self = .range(
+            soft: try c.decode(ComposeScalar.self, forKey: .soft).stringValue,
+            hard: try c.decode(ComposeScalar.self, forKey: .hard).stringValue)
+    }
+
+    /// The value part of a `--ulimit name=...` argument.
+    public var argumentValue: String {
+        switch self {
+        case .single(let v): return v
+        case .range(let soft, let hard): return "\(soft):\(hard)"
+        }
+    }
+}
+
+/// `ulimits: { nofile: 65535, nproc: {soft: 1024, hard: 2048} }`.
+public struct Ulimits: Decodable, Sendable, Equatable {
+    public let limits: [String: ULimitValue]
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        self.limits = try c.decode([String: ULimitValue].self)
+    }
+
+    /// `--ulimit` argument values, sorted for determinism.
+    public var arguments: [String] {
+        limits.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value.argumentValue)" }
+    }
+}
+
+/// `devices` entry: `"/dev/x:/dev/y"` or a long-form `{source, target, ...}`.
+/// Decoded permissively (the long form's fields are not modeled) so spec-valid
+/// files parse — `container` has no `--device`, so it is warned, not applied.
+public enum DeviceMapping: Decodable, Sendable, Equatable {
+    case short(String)
+    case long(AnyConfig)
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let s = try? c.decode(String.self) {
+            self = .short(s)
+        } else {
+            self = .long(try c.decode(AnyConfig.self))
+        }
+    }
+}
+
+/// `extra_hosts` as a list (`["host:ip"]`) or a map (`{host: ip}`).
+public enum ExtraHosts: Decodable, Sendable, Equatable {
+    case list([String])
+    case map([String: ComposeScalar])
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let arr = try? c.decode([String].self) {
+            self = .list(arr)
+        } else {
+            self = .map(try c.decode([String: ComposeScalar].self))
+        }
+    }
+
+    /// Normalized `host:ip` entries.
+    public var entries: [String] {
+        switch self {
+        case .list(let a): return a
+        case .map(let m): return m.sorted { $0.key < $1.key }.map { "\($0.key):\($0.value.stringValue)" }
+        }
+    }
+}
+
+/// `gpus: all`, `gpus: 1`, or `gpus: [{driver: nvidia, ...}]`. Decoded so files
+/// parse; `container` has no GPU passthrough flag, so it is warned, not applied.
+public enum GPUs: Decodable, Sendable, Equatable {
+    case scalar(String)
+    case list([AnyConfig])
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let arr = try? c.decode([AnyConfig].self) {
+            self = .list(arr)
+        } else {
+            self = .scalar(try c.decode(ComposeScalar.self).stringValue)
+        }
+    }
+}
+
 /// `external: true` or `external: { name: foo }`.
 public struct ExternalRef: Decodable, Sendable, Equatable {
     public let isExternal: Bool

@@ -6,6 +6,7 @@
 // interval / retries / start_period.
 //===----------------------------------------------------------------------===//
 
+import ComposeKit
 import Foundation
 
 public struct HealthChecker: Sendable {

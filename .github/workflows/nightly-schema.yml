@@ -1,0 +1,82 @@
+name: Nightly schema sync
+
+# Refresh the vendored compose-spec schema from upstream, prove our fixtures
+# still conform to the latest spec and the test suite still passes, then open a
+# PR if (and only if) the schema actually changed. Surfaces upstream spec drift
+# the moment it lands rather than when something breaks.
+
+on:
+  schedule:
+    - cron: "0 3 * * *" # 03:00 UTC nightly
+  workflow_dispatch: # allow manual runs
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    name: Sync + validate compose-spec schema
+    # macOS to match the project's Swift test platform (see ci.yml).
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch latest compose-spec schema
+        run: |
+          set -euo pipefail
+          url="https://raw.githubusercontent.com/compose-spec/compose-spec/master/schema/compose-spec.json"
+          curl -fsSL "$url" -o Schema/compose-spec.json
+          sha=$(curl -fsSL -H "Authorization: Bearer ${{ github.token }}" \
+            "https://api.github.com/repos/compose-spec/compose-spec/commits?path=schema/compose-spec.json&per_page=1" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print(d[0]['sha'] if d else 'unknown')" || echo unknown)
+          printf 'source: %s\nfetched: %s\nupstream-commit: %s\n' \
+            "$url" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$sha" > Schema/PROVENANCE
+          echo "upstream commit: $sha"
+
+      - name: Detect change
+        id: diff
+        run: |
+          if git diff --quiet -- Schema/compose-spec.json; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Schema unchanged."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Schema changed."
+          fi
+
+      # Always validate (even when unchanged) so a manual run is meaningful.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install check-jsonschema
+      - name: Fixtures still conform to latest spec
+        run: |
+          check-jsonschema --schemafile Schema/compose-spec.json \
+            Tests/ComposeKitTests/Fixtures/compose.yaml \
+            Tests/ComposeKitTests/Fixtures/corpus/*.yaml
+
+      - name: Build & test
+        run: |
+          swift --version
+          swift build
+          swift test
+
+      # Only open a PR when the schema moved and the checks above passed.
+      - name: Open PR for schema update
+        if: steps.diff.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/compose-spec-schema-sync
+          title: "chore: sync compose-spec schema"
+          commit-message: "chore: sync compose-spec schema from upstream"
+          body: |
+            Automated nightly refresh of `Schema/compose-spec.json` from
+            [compose-spec/compose-spec](https://github.com/compose-spec/compose-spec).
+
+            Fixtures were re-validated against the new schema and the test suite
+            passed in this run. See `Schema/PROVENANCE` for the upstream commit.
+          add-paths: |
+            Schema/compose-spec.json
+            Schema/PROVENANCE
+          delete-branch: true
