@@ -10,6 +10,7 @@ public enum ComposeError: Error, CustomStringConvertible {
     case requiredVariable(String, String?)
     case envFileNotFound(String)
     case dependencyUnhealthy(String)
+    case dependencyFailed(String, Int32)
 
     public var description: String {
         switch self {
@@ -30,6 +31,8 @@ public enum ComposeError: Error, CustomStringConvertible {
             return "env file not found: \(path)"
         case .dependencyUnhealthy(let name):
             return "dependency '\(name)' did not become healthy in time"
+        case .dependencyFailed(let name, let status):
+            return "dependency '\(name)' did not complete successfully (exit \(status))"
         }
     }
 }

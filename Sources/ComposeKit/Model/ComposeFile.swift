@@ -18,6 +18,8 @@ public struct ComposeFile: Decodable, Sendable {
     public var services: [String: Service]
     public var networks: [String: NetworkSpec?]?
     public var volumes: [String: VolumeSpec?]?
+    public var configs: [String: FileObjectSpec?]?
+    public var secrets: [String: FileObjectSpec?]?
 
     /// Decode a Compose file from a YAML string.
     public static func parse(yaml: String) throws -> ComposeFile {
@@ -81,6 +83,53 @@ public struct Service: Decodable, Sendable {
     public var stop_grace_period: ComposeScalar?
     public var pull_policy: String?
     public var gpus: GPUs?
+
+    /// References to top-level `configs:` / `secrets:`, mounted as files.
+    public var configs: [ServiceFileRef]?
+    public var secrets: [ServiceFileRef]?
+}
+
+/// A top-level `configs:` / `secrets:` definition. The two share a shape; the
+/// source is one of `file`, `environment`, `content`, or `external`.
+public struct FileObjectSpec: Decodable, Sendable, Equatable {
+    public var file: String?
+    public var environment: String?
+    public var content: String?
+    public var external: ExternalRef?
+    public var name: String?
+}
+
+/// A service-level config/secret reference: short (`- db_password`) or long
+/// (`{source, target, uid, gid, mode}`).
+public enum ServiceFileRef: Decodable, Sendable, Equatable {
+    case short(String)
+    case long(Long)
+
+    public struct Long: Decodable, Sendable, Equatable {
+        public var source: String
+        public var target: String?
+        public var uid: String?
+        public var gid: String?
+        // Often the octal int `0444`, sometimes the string `"0444"`.
+        public var mode: ComposeScalar?
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.singleValueContainer()
+        if let s = try? c.decode(String.self) {
+            self = .short(s)
+        } else {
+            self = .long(try c.decode(Long.self))
+        }
+    }
+
+    /// The referenced top-level source name.
+    public var source: String {
+        switch self {
+        case .short(let s): return s
+        case .long(let l): return l.source
+        }
+    }
 }
 
 /// `depends_on` as a plain list, or a map of `service -> { condition }`.
