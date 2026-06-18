@@ -60,9 +60,31 @@ public struct ContainerTranslator: Sendable {
 
     // MARK: - Run
 
+    /// Host paths for resolved config/secret sources, keyed by source name.
+    /// The Orchestrator builds this (resolving `file:` and materializing
+    /// `content:`/`environment:`); the translator stays a pure function of it.
+    public struct ResolvedFileObjects: Sendable, Equatable {
+        public var configs: [String: String]
+        public var secrets: [String: String]
+        public init(configs: [String: String] = [:], secrets: [String: String] = [:]) {
+            self.configs = configs
+            self.secrets = secrets
+        }
+        public static let none = ResolvedFileObjects()
+    }
+
     /// `container run` args for one service.
-    public func runArgs(service name: String, _ svc: Service, image: String) -> [String] {
-        var a = ["run", "--detach"]
+    ///
+    /// - Parameters:
+    ///   - detach: run in the background (`--detach`). One-shot dependencies
+    ///     gated by `service_completed_successfully` are run attached (`false`).
+    ///   - files: resolved host paths for the service's configs/secrets.
+    public func runArgs(
+        service name: String, _ svc: Service, image: String,
+        detach: Bool = true, files: ResolvedFileObjects = .none
+    ) -> [String] {
+        var a = ["run"]
+        if detach { a += ["--detach"] }
         a += ["--name", containerName(service: name, declared: svc.container_name)]
 
         // Project bookkeeping labels.
@@ -132,6 +154,11 @@ public struct ContainerTranslator: Sendable {
             a += ["--memory", mem]
         }
 
+        // Configs / secrets: read-only file bind mounts. Secrets default to
+        // /run/secrets/<name>, configs to /<name>.
+        a += fileObjectMounts(svc.secrets, defaultDir: "/run/secrets", resolved: files.secrets)
+        a += fileObjectMounts(svc.configs, defaultDir: "", resolved: files.configs)
+
         // Entrypoint (container takes a single string; extra tokens go to command).
         var trailing: [String] = []
         if let entrypoint = svc.entrypoint {
@@ -158,6 +185,34 @@ public struct ContainerTranslator: Sendable {
     }
 
     // MARK: - Helpers
+
+    /// Read-only bind-mount args for a service's config/secret refs, sorted by
+    /// source name for deterministic output. Refs whose source wasn't resolved
+    /// (undefined, external, or unmaterialized) are skipped — the Orchestrator
+    /// warns about those.
+    private func fileObjectMounts(
+        _ refs: [ServiceFileRef]?, defaultDir: String, resolved: [String: String]
+    ) -> [String] {
+        guard let refs else { return [] }
+        var args: [String] = []
+        for ref in refs.sorted(by: { $0.source < $1.source }) {
+            guard let host = resolved[ref.source] else { continue }
+            args += ["--volume", "\(host):\(mountTarget(ref, defaultDir: defaultDir)):ro"]
+        }
+        return args
+    }
+
+    /// Resolve the in-container path for a config/secret ref. An absolute
+    /// `target` wins; a relative one is placed under `defaultDir` (or `/` for
+    /// configs); with no target, the source name is used.
+    private func mountTarget(_ ref: ServiceFileRef, defaultDir: String) -> String {
+        func place(_ leaf: String) -> String {
+            if leaf.hasPrefix("/") { return leaf }
+            return defaultDir.isEmpty ? "/\(leaf)" : "\(defaultDir)/\(leaf)"
+        }
+        if case .long(let l) = ref, let target = l.target { return place(target) }
+        return place(ref.source)
+    }
 
     private func volumeArguments(_ mount: VolumeMount) -> [String] {
         switch mount {

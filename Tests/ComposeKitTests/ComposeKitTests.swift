@@ -318,6 +318,103 @@ struct NewFieldTests {
     }
 }
 
+@Suite("Configs & secrets")
+struct FileObjectTests {
+    private func appService() throws -> Service {
+        let url = Bundle.module.url(
+            forResource: "configs-secrets", withExtension: "yaml", subdirectory: "Fixtures/corpus")!
+        return try ComposeFile.parse(yaml: String(contentsOf: url, encoding: .utf8)).services["app"]!
+    }
+
+    @Test("short and long refs parse")
+    func parseRefs() throws {
+        let app = try appService()
+        #expect(app.secrets?.map(\.source).sorted() == ["api_key", "db_password"])
+        #expect(app.configs?.map(\.source).sorted() == ["app_config", "nginx_conf"])
+    }
+
+    @Test("configs/secrets become read-only bind mounts at the right targets")
+    func mounts() throws {
+        let t = ContainerTranslator(
+            project: "p", baseDirectory: URL(fileURLWithPath: "/p"), hostEnv: [:])
+        let files = ContainerTranslator.ResolvedFileObjects(
+            configs: ["app_config": "/h/app.yaml", "nginx_conf": "/h/nginx.conf"],
+            secrets: ["db_password": "/h/db", "api_key": "/h/api"])
+        let args = t.runArgs(service: "app", try appService(), image: "app:latest", files: files)
+        #expect(adjacent(args, "--volume", "/h/db:/run/secrets/db_password:ro"))  // short secret default
+        #expect(adjacent(args, "--volume", "/h/api:/etc/api/key:ro"))  // long secret custom target
+        #expect(adjacent(args, "--volume", "/h/app.yaml:/etc/app/config.yaml:ro"))  // long config target
+        #expect(adjacent(args, "--volume", "/h/nginx.conf:/nginx_conf:ro"))  // short config -> /name
+        // Mounts precede the image.
+        let vol = args.firstIndex(of: "/h/db:/run/secrets/db_password:ro")!
+        #expect(vol < args.firstIndex(of: "app:latest")!)
+    }
+
+    @Test("detach:false omits --detach for one-shot runs")
+    func detachFlag() throws {
+        let t = ContainerTranslator(
+            project: "p", baseDirectory: URL(fileURLWithPath: "/p"), hostEnv: [:])
+        let svc = try ComposeFile.parse(yaml: "services:\n  x:\n    image: a\n").services["x"]!
+        #expect(!t.runArgs(service: "x", svc, image: "a", detach: false).contains("--detach"))
+        #expect(t.runArgs(service: "x", svc, image: "a").contains("--detach"))
+    }
+}
+
+// .serialized: these mutate the process-global CONTAINER_CLI env var.
+@Suite("Completed-successfully gating", .serialized)
+struct OneShotTests {
+    @Test("dry-run up completes for a stack using service_completed_successfully")
+    func dryRunUp() throws {
+        // local-dev.yaml gates web on migrate (service_completed_successfully);
+        // a dry run exercises the one-shot detection + attached-run branch.
+        let url = Bundle.module.url(
+            forResource: "local-dev", withExtension: "yaml", subdirectory: "Fixtures/corpus")!
+        let project = try Project.load(
+            explicit: url.path, projectName: nil, cwd: url.deletingLastPathComponent())
+        let orch = Orchestrator(project: project, runner: ContainerRunner(dryRun: true))
+        try orch.up(build: false, only: [])
+    }
+
+    @Test("a failing one-shot dependency aborts up")
+    func failingOneShotAborts() throws {
+        // Shim `container` that always exits non-zero; the one-shot `a` then
+        // fails and `up` must throw dependencyFailed before `b` is created.
+        let shim = FileManager.default.temporaryDirectory
+            .appendingPathComponent("container-fail-shim-\(getpid())")
+        try "#!/bin/sh\nexit 7\n".write(to: shim, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
+        defer { try? FileManager.default.removeItem(at: shim) }
+
+        setenv("CONTAINER_CLI", shim.path, 1)
+        let runner = ContainerRunner()  // captures the shim path at init
+        unsetenv("CONTAINER_CLI")
+
+        let yaml = """
+            services:
+              a:
+                image: alpine
+                command: ["false"]
+              b:
+                image: alpine
+                depends_on:
+                  a:
+                    condition: service_completed_successfully
+            """
+        let project = Project(
+            name: "t", file: try ComposeFile.parse(yaml: yaml),
+            baseDirectory: URL(fileURLWithPath: "/tmp"), variables: [:])
+        let orch = Orchestrator(project: project, runner: runner)
+
+        do {
+            try orch.up(build: false, only: [])
+            Issue.record("expected up to throw dependencyFailed")
+        } catch let ComposeError.dependencyFailed(name, status) {
+            #expect(name == "a")
+            #expect(status == 7)
+        }
+    }
+}
+
 /// True if `value` immediately follows `flag` somewhere in `args`.
 private func adjacent(_ args: [String], _ flag: String, _ value: String) -> Bool {
     for i in args.indices.dropLast() where args[i] == flag && args[i + 1] == value {

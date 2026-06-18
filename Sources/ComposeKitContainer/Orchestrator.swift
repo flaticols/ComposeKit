@@ -36,6 +36,11 @@ public struct Orchestrator: Sendable {
         try ensureNetworks()
         try ensureVolumes()
 
+        // Services that a selected service depends on with
+        // `condition: service_completed_successfully` — run these to completion.
+        let oneShot = completedSuccessfullyTargets(selected: selected)
+        let resolved = resolveFileObjects(selected: selected)
+
         let order = try Planner.startOrder(project.file.services).filter { selected.contains($0) }
         for name in order {
             guard let svc = project.file.services[name] else { continue }
@@ -49,9 +54,36 @@ public struct Orchestrator: Sendable {
             let cname = translator.containerName(service: name, declared: svc.container_name)
             runner.runSilently(["delete", "--force", cname])
 
-            info("Creating \(cname) ...")
-            try runner.runChecked(translator.runArgs(service: name, svc, image: image))
+            // One-shot dependency: run attached and use the exit code as the gate
+            // (`container` has no `wait`); a non-zero exit aborts `up`. Topological
+            // order guarantees it completes before any dependent starts.
+            if oneShot.contains(name) {
+                info("Running \(cname) (one-shot) ...")
+                let args = translator.runArgs(
+                    service: name, svc, image: image, detach: false, files: resolved)
+                let status = try runner.run(args)
+                if status != 0 { throw ComposeError.dependencyFailed(name, status) }
+            } else {
+                info("Creating \(cname) ...")
+                try runner.runChecked(
+                    translator.runArgs(service: name, svc, image: image, files: resolved))
+            }
         }
+    }
+
+    /// Names of services that any selected service depends on with the
+    /// `service_completed_successfully` condition.
+    private func completedSuccessfullyTargets(selected: Set<String>) -> Set<String> {
+        var targets = Set<String>()
+        for name in selected {
+            guard let deps = project.file.services[name]?.depends_on else { continue }
+            for dep in deps.names
+            where selected.contains(dep)
+                && deps.condition(for: dep) == "service_completed_successfully" {
+                targets.insert(dep)
+            }
+        }
+        return targets
     }
 
     /// Block on `service_healthy` dependencies that were also selected for `up`.
@@ -71,6 +103,76 @@ public struct Orchestrator: Sendable {
                     "service '\(name)': depends_on '\(dep)' wants service_healthy but "
                         + "'\(dep)' defines no healthcheck; starting without gating")
             }
+        }
+    }
+
+    /// Resolve every config/secret source referenced by a selected service to a
+    /// host file path: `file:` is resolved against the project dir;
+    /// `content:`/`environment:` are materialized to a temp file. `external:`,
+    /// undefined, and source-less entries are warned and skipped, as are
+    /// uid/gid/mode (bind mounts can't enforce them).
+    private func resolveFileObjects(selected: Set<String>) -> ContainerTranslator.ResolvedFileObjects {
+        var configs: [String: String] = [:]
+        var secrets: [String: String] = [:]
+
+        func resolve(
+            kind: String,
+            defs: [String: FileObjectSpec?]?,
+            refsFor: (Service) -> [ServiceFileRef]?,
+            into out: inout [String: String]
+        ) {
+            var referenced = Set<String>()
+            for name in selected {
+                guard let svc = project.file.services[name] else { continue }
+                for ref in refsFor(svc) ?? [] {
+                    referenced.insert(ref.source)
+                    if case .long(let l) = ref, l.uid != nil || l.gid != nil || l.mode != nil {
+                        warn("service '\(name)': \(kind) '\(ref.source)' uid/gid/mode "
+                            + "are not enforced by container")
+                    }
+                }
+            }
+            for source in referenced.sorted() {
+                guard let spec = defs?[source] ?? nil else {
+                    warn("\(kind) '\(source)' is referenced but not defined; skipping")
+                    continue
+                }
+                if spec.external?.isExternal == true {
+                    warn("\(kind) '\(source)' is external; container cannot resolve it, skipping")
+                } else if let file = spec.file {
+                    out[source] = translator.resolvePath(file)
+                } else if let content = spec.content {
+                    if let p = materialize(kind: kind, name: source, content: content) { out[source] = p }
+                } else if let envName = spec.environment {
+                    let value = project.variables[envName] ?? ""
+                    if let p = materialize(kind: kind, name: source, content: value) { out[source] = p }
+                } else {
+                    warn("\(kind) '\(source)' has no file/content/environment source; skipping")
+                }
+            }
+        }
+
+        resolve(kind: "secret", defs: project.file.secrets, refsFor: { $0.secrets }, into: &secrets)
+        resolve(kind: "config", defs: project.file.configs, refsFor: { $0.configs }, into: &configs)
+        return .init(configs: configs, secrets: secrets)
+    }
+
+    /// Write inline `content:`/`environment:` source data to a temp file and
+    /// return its path. During a dry run nothing is written (the path is still
+    /// returned so the planned mount is visible).
+    private func materialize(kind: String, name: String, content: String) -> String? {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("composekit-\(project.name)", isDirectory: true)
+            .appendingPathComponent("\(kind)s", isDirectory: true)
+        let url = dir.appendingPathComponent(name)
+        if runner.dryRun { return url.path }
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try content.write(to: url, atomically: true, encoding: .utf8)
+            return url.path
+        } catch {
+            warn("\(kind) '\(name)': failed to materialize content (\(error)); skipping")
+            return nil
         }
     }
 

@@ -64,6 +64,25 @@ let project = try Project.load(explicit: nil, projectName: nil, cwd: cwd,
 let enabled = project.enabledServices()   // honors profiles + depends_on
 ```
 
+## Dependency conditions
+
+`depends_on` conditions are honored during `up`:
+
+- `service_started` — ordering only (topological).
+- `service_healthy` — gated by polling the dependency's `healthcheck`.
+- `service_completed_successfully` — the dependency is run **attached** (to
+  completion); a non-zero exit aborts `up`. Ideal for one-shot migration/seed
+  steps that must finish before dependents start.
+
+## Configs & secrets
+
+Top-level `configs:` / `secrets:` referenced by a service are provisioned as
+**read-only file bind mounts** — secrets at `/run/secrets/<name>`, configs at
+`/<name>` (or an explicit `target:`). `file:` sources mount directly;
+`content:`/`environment:` sources are materialized to a temp file. `external:`
+sources and `uid`/`gid`/`mode` are warned (not enforced — bind mounts can't
+express them). Single-file bind support depends on the `container` runtime.
+
 ## compose-validate
 
 A dependency-free tool to check a file parses and inspect the planned argv:
