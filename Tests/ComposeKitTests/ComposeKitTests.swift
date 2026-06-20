@@ -525,6 +525,78 @@ struct BuildTests {
     }
 }
 
+// .serialized: mutates the process-global CONTAINER_CLI env var.
+@Suite("Lifecycle commands", .serialized)
+struct LifecycleTests {
+    /// Run `body` against an Orchestrator whose `container` is a shim that records
+    /// each invocation, and return the recorded command lines.
+    private func capture(_ tag: String, _ body: (Orchestrator) throws -> Void) throws -> [String] {
+        let dir = FileManager.default.temporaryDirectory
+        let log = dir.appendingPathComponent("ck-log-\(tag)-\(getpid()).txt")
+        let shim = dir.appendingPathComponent("ck-shim-\(tag)-\(getpid()).sh")
+        try? FileManager.default.removeItem(at: log)
+        try "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '\(log.path)'\nexit 0\n"
+            .write(to: shim, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: shim.path)
+        defer {
+            try? FileManager.default.removeItem(at: shim)
+            try? FileManager.default.removeItem(at: log)
+        }
+
+        setenv("CONTAINER_CLI", shim.path, 1)
+        let runner = ContainerRunner()  // captures the shim path at init
+        unsetenv("CONTAINER_CLI")
+
+        let yaml = """
+            services:
+              db:
+                image: postgres:16
+              app:
+                build: .
+                depends_on: [db]
+            """
+        let project = Project(
+            name: "proj", file: try ComposeFile.parse(yaml: yaml),
+            baseDirectory: URL(fileURLWithPath: "/tmp"), variables: [:])
+        try body(Orchestrator(project: project, runner: runner))
+        let text = (try? String(contentsOf: log, encoding: .utf8)) ?? ""
+        return text.split(separator: "\n").map(String.init)
+    }
+
+    @Test("exec passes -i/-t and the command into the service container")
+    func exec() throws {
+        let lines = try capture("exec") {
+            _ = try $0.exec(service: "db", command: ["psql", "-U", "app"], interactive: true, tty: true)
+        }
+        #expect(lines.contains("exec --interactive --tty proj-db psql -U app"))
+    }
+
+    @Test("pull fetches image services and skips build-only ones")
+    func pull() throws {
+        let lines = try capture("pull") { try $0.pull(only: []) }
+        #expect(lines.contains("image pull postgres:16"))
+        #expect(!lines.contains { $0.contains("proj-app") })  // app builds locally
+    }
+
+    @Test("stop runs in reverse dependency order")
+    func stop() throws {
+        let lines = try capture("stop") { try $0.stop(only: []) }
+        let app = lines.firstIndex(of: "stop proj-app")
+        let db = lines.firstIndex(of: "stop proj-db")
+        #expect(app != nil && db != nil && app! < db!)  // dependent stops first
+    }
+
+    @Test("restart stops everything before starting anything")
+    func restart() throws {
+        let lines = try capture("restart") { try $0.restart(only: []) }
+        #expect(lines.contains("stop proj-db"))
+        #expect(lines.contains("start proj-db"))
+        let lastStop = lines.lastIndex { $0.hasPrefix("stop ") }!
+        let firstStart = lines.firstIndex { $0.hasPrefix("start ") }!
+        #expect(lastStop < firstStart)
+    }
+}
+
 /// True if `value` immediately follows `flag` somewhere in `args`.
 private func adjacent(_ args: [String], _ flag: String, _ value: String) -> Bool {
     for i in args.indices.dropLast() where args[i] == flag && args[i + 1] == value {

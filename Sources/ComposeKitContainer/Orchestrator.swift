@@ -305,6 +305,82 @@ public struct Orchestrator: Sendable {
         }
     }
 
+    // MARK: - exec
+
+    /// Run a command inside a running service's container, inheriting stdio so
+    /// interactive shells work.
+    ///
+    /// - Parameters:
+    ///   - service: the service whose container to exec into.
+    ///   - command: the command and arguments to run.
+    ///   - interactive: keep stdin open (`-i`).
+    ///   - tty: allocate a TTY (`-t`).
+    /// - Returns: the command's exit status.
+    /// - Throws: ``ComposeError/unknownService(_:)`` if the service is undeclared.
+    @discardableResult
+    public func exec(
+        service: String, command: [String], interactive: Bool = false, tty: Bool = false
+    ) throws -> Int32 {
+        try validate([service])
+        let svc = project.file.services[service]
+        let cname = translator.containerName(service: service, declared: svc?.container_name)
+        var args = ["exec"]
+        if interactive { args.append("--interactive") }
+        if tty { args.append("--tty") }
+        args.append(cname)
+        args += command
+        return try runner.run(args)
+    }
+
+    // MARK: - pull
+
+    /// Pre-fetch images for the selected services. Build-only services (no
+    /// `image:`) and duplicate image references are skipped.
+    ///
+    /// - Parameter services: limit to these services; empty means all.
+    public func pull(only services: [String]) throws {
+        let selected = try select(services)
+        var pulled = Set<String>()
+        for name in selected.sorted() {
+            guard let svc = project.file.services[name], let image = svc.image, svc.build == nil
+            else { continue }
+            guard pulled.insert(image).inserted else { continue }
+            info("Pulling \(image) ...")
+            try runner.runChecked(["image", "pull", image])
+        }
+    }
+
+    // MARK: - stop / start / restart
+
+    /// Stop the selected services' containers (reverse dependency order) without
+    /// removing them. Best-effort: an already-stopped container is ignored.
+    public func stop(only services: [String]) throws {
+        for name in try ordered(services, reversed: true) {
+            guard let svc = project.file.services[name] else { continue }
+            let cname = translator.containerName(service: name, declared: svc.container_name)
+            info("Stopping \(cname) ...")
+            runner.runSilently(["stop", cname])
+        }
+    }
+
+    /// Start previously-created containers for the selected services (dependency
+    /// order) without recreating them.
+    public func start(only services: [String]) throws {
+        for name in try ordered(services, reversed: false) {
+            guard let svc = project.file.services[name] else { continue }
+            let cname = translator.containerName(service: name, declared: svc.container_name)
+            info("Starting \(cname) ...")
+            try runner.runChecked(["start", cname])
+        }
+    }
+
+    /// Restart the selected services (stop then start). `container` has no native
+    /// restart command, so this is implemented as a stop followed by a start.
+    public func restart(only services: [String]) throws {
+        try stop(only: services)
+        try start(only: services)
+    }
+
     // MARK: - shared helpers
 
     private func select(_ services: [String]) throws -> Set<String> {
@@ -318,6 +394,13 @@ public struct Orchestrator: Sendable {
         for s in services where project.file.services[s] == nil {
             throw ComposeError.unknownService(s)
         }
+    }
+
+    /// Selected services in dependency order (optionally reversed).
+    private func ordered(_ services: [String], reversed: Bool) throws -> [String] {
+        let selected = try select(services)
+        let order = try Planner.startOrder(project.file.services).filter { selected.contains($0) }
+        return reversed ? order.reversed() : order
     }
 
     private func ensureNetworks() throws {
