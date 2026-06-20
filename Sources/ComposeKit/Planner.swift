@@ -1,13 +1,15 @@
-//===----------------------------------------------------------------------===//
-// Resolve service start order from `depends_on` via a topological sort.
-//
-// NOTE: only ordering is enforced. Compose's `condition: service_healthy`
-// gating is not yet applied — see Translator/Orchestrator TODOs.
-//===----------------------------------------------------------------------===//
-
+/// Computes service start order from `depends_on`.
+///
+/// This resolves *ordering* only. The `depends_on` *conditions*
+/// (`service_healthy`, `service_completed_successfully`) are enforced separately
+/// by the container layer's `Orchestrator` during `up`.
 public enum Planner {
     /// Return service names in dependency order (dependencies first).
-    /// Throws `ComposeError.dependencyCycle` on a cycle.
+    ///
+    /// - Parameter services: the project's services, keyed by name.
+    /// - Returns: a topological ordering where every service appears after the
+    ///   services it depends on. Sorted for deterministic output.
+    /// - Throws: ``ComposeError/dependencyCycle(_:)`` if `depends_on` is cyclic.
     public static func startOrder(_ services: [String: Service]) throws -> [String] {
         var visited = Set<String>()
         var inProgress = Set<String>()

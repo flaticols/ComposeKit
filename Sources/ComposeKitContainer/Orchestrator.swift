@@ -1,15 +1,23 @@
-//===----------------------------------------------------------------------===//
-// High-level Compose operations, built on ContainerTranslator + ContainerRunner.
-//===----------------------------------------------------------------------===//
-
 import ComposeKit
 import Foundation
 
+/// High-level Compose operations (`up`, `down`, `ps`, `logs`), built on top of
+/// ``ContainerTranslator`` and ``ContainerRunner``.
+///
+/// The orchestrator owns the side effects the translator avoids: it creates
+/// project networks and volumes, materializes `content:`/`environment:`
+/// configs and secrets, gates `depends_on` conditions, and spawns `container`
+/// commands in dependency order. Construct one from a loaded `Project`.
 public struct Orchestrator: Sendable {
+    /// The loaded project being operated on.
     public let project: Project
+    /// The runner used to invoke the `container` CLI.
     public let runner: ContainerRunner
+    /// The translator mapping services to `container` argument vectors.
     public let translator: ContainerTranslator
 
+    /// Create an orchestrator for a loaded `Project`, wiring a
+    /// ``ContainerTranslator`` from the project's identity and variables.
     public init(project: Project, runner: ContainerRunner) {
         self.project = project
         self.runner = runner
@@ -30,6 +38,20 @@ public struct Orchestrator: Sendable {
 
     // MARK: - up
 
+    /// Create and start the project's services in dependency order.
+    ///
+    /// Provisions networks and volumes, resolves configs/secrets, honors
+    /// `depends_on` conditions (waiting on `service_healthy`, running
+    /// `service_completed_successfully` dependencies to completion), and recreates
+    /// any stale containers.
+    ///
+    /// - Parameters:
+    ///   - build: force a `container build` for services that have a `build:`
+    ///     section, even when an `image:` already exists.
+    ///   - services: limit the operation to these services (and their
+    ///     dependencies); empty means every profile-enabled service.
+    /// - Throws: `ComposeError` for unknown services, dependency cycles, or a
+    ///   dependency that fails to become healthy or complete successfully.
     public func up(build: Bool, only services: [String]) throws {
         try validate(services)
         let selected = project.enabledServices(explicit: services)
@@ -200,6 +222,11 @@ public struct Orchestrator: Sendable {
 
     // MARK: - down
 
+    /// Stop and remove the project's containers and networks (in reverse
+    /// dependency order), optionally removing named volumes too.
+    ///
+    /// - Parameter removeVolumes: also delete the project's declared named
+    ///   volumes (data loss); defaults to keeping them.
     public func down(removeVolumes: Bool) throws {
         // Stop & remove in reverse dependency order.
         let order = try Planner.startOrder(project.file.services).reversed()
@@ -229,8 +256,10 @@ public struct Orchestrator: Sendable {
 
     // MARK: - ps
 
-    /// List this project's containers. Uses a name-prefix filter over
-    /// `container list` output (the CLI's JSON schema is not depended upon).
+    /// Print the project's containers, filtered from `container list` by name
+    /// prefix (the CLI's JSON schema is intentionally not depended upon).
+    ///
+    /// - Parameter all: include stopped containers (`container list --all`).
     public func ps(all: Bool) throws {
         var args = ["list"]
         if all { args.append("--all") }
@@ -254,6 +283,13 @@ public struct Orchestrator: Sendable {
 
     // MARK: - logs
 
+    /// Print logs for the selected services (all of them when `services` is empty).
+    ///
+    /// - Parameters:
+    ///   - follow: stream new output (`container logs --follow`). With more than
+    ///     one service this tails them sequentially; pass a single service to
+    ///     stream live.
+    ///   - services: limit to these services; empty means all.
     public func logs(follow: Bool, only services: [String]) throws {
         let selected = try select(services).sorted()
         if follow && selected.count > 1 {

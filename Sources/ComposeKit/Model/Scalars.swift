@@ -1,10 +1,8 @@
-//===----------------------------------------------------------------------===//
 // Polymorphic decoding helpers for the Compose spec.
 //
 // The Compose file format is loose: many fields accept either a scalar, a
-// sequence, or a mapping. These small wrappers normalize those shapes so the
-// rest of the code can treat them uniformly.
-//===----------------------------------------------------------------------===//
+// sequence, or a mapping. The wrappers in this file normalize those shapes so
+// the rest of the code can treat them uniformly.
 
 import Foundation
 

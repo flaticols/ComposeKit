@@ -1,17 +1,17 @@
-//===----------------------------------------------------------------------===//
-// Health gating for `depends_on: condition: service_healthy`.
-//
-// `container` has no native healthcheck, so we run the Compose-defined
-// `healthcheck.test` ourselves via `container exec` in a poll loop, honoring
-// interval / retries / start_period.
-//===----------------------------------------------------------------------===//
-
 import ComposeKit
 import Foundation
 
+/// Polls a service's Compose `healthcheck` to implement
+/// `depends_on: condition: service_healthy` gating.
+///
+/// `container` has no native health check, so ComposeKit runs the Compose-defined
+/// `healthcheck.test` itself via `container exec` in a poll loop, honoring
+/// `interval`, `retries`, and `start_period`.
 public struct HealthChecker: Sendable {
+    /// The runner used to exec the health-check command in the container.
     public let runner: ContainerRunner
 
+    /// Create a health checker that execs through `runner`.
     public init(runner: ContainerRunner) {
         self.runner = runner
     }
