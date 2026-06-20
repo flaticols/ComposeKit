@@ -20,7 +20,7 @@ Build it locally:
 swift package --disable-sandbox preview-documentation --target ComposeKit
 ```
 
-(Publishing requires Pages set to "GitHub Actions" once under Settings -> Pages.)
+(The Docs workflow enables Pages automatically on first run.)
 
 ## Modules
 

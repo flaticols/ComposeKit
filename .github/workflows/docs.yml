@@ -37,7 +37,29 @@ jobs:
             --hosting-base-path ComposeKit \
             --output-path "$RUNNER_TEMP/docs"
 
+      - name: Redirect site root to the documentation landing
+        # DocC has no page at the base path; without this the root URL 404s.
+        # Deep routes keep their own index.html, so only `/` is affected.
+        run: |
+          cat > "$RUNNER_TEMP/docs/index.html" <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head>
+              <meta charset="utf-8">
+              <title>ComposeKit Documentation</title>
+              <meta http-equiv="refresh" content="0; url=./documentation/">
+              <link rel="canonical" href="./documentation/">
+            </head>
+            <body>
+              <a href="./documentation/">Continue to the ComposeKit documentation</a>
+            </body>
+          </html>
+          HTML
+
       - uses: actions/configure-pages@v5
+        with:
+          # Turn Pages on automatically if it isn't already (no settings click).
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: ${{ runner.temp }}/docs
