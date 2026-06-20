@@ -28,7 +28,8 @@ let package = Package(
         .executable(name: "compose-validate", targets: ["compose-validate"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0")
+        .package(url: "https://github.com/jpsim/Yams.git", from: "5.1.0"),
+        .package(url: "https://github.com/apple/swift-docc-plugin", from: "1.3.0"),
     ],
     targets: [
         // Runtime-agnostic Compose spec core.

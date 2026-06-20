@@ -1,0 +1,45 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Required for the GitHub Pages deployment.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages deploy at a time; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-deploy:
+    name: Build & deploy DocC
+    runs-on: macos-15
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build combined DocC site
+        run: |
+          swift package --allow-writing-to-directory "$RUNNER_TEMP/docs" \
+            generate-documentation \
+            --target ComposeKit --target ComposeKitContainer \
+            --enable-experimental-combined-documentation \
+            --disable-indexing \
+            --transform-for-static-hosting \
+            --hosting-base-path ComposeKit \
+            --output-path "$RUNNER_TEMP/docs"
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ runner.temp }}/docs
+      - id: deploy
+        uses: actions/deploy-pages@v4

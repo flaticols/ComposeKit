@@ -9,6 +9,19 @@ layers: a **runtime-agnostic spec core** and a **`container` runtime layer**.
 Frontends — the `container-compose` binary and the `container` CLI plugin — wire
 the container layer into a command surface.
 
+## Documentation
+
+API reference is generated with [Swift-DocC](https://www.swift.org/documentation/docc/)
+and published to GitHub Pages: <https://flaticols.github.io/ComposeKit/>.
+
+Build it locally:
+
+```sh
+swift package --disable-sandbox preview-documentation --target ComposeKit
+```
+
+(Publishing requires Pages set to "GitHub Actions" once under Settings -> Pages.)
+
 ## Modules
 
 ```
