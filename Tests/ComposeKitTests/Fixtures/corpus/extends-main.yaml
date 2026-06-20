@@ -1,0 +1,20 @@
+# extends across a file (web -> parts/base.yaml#base-app) and locally
+# (worker -> web). Override env merges by key; ports concatenate; command wins.
+name: extends-demo
+services:
+  web:
+    extends:
+      file: parts/base.yaml
+      service: base-app
+    environment:
+      LOG_LEVEL: debug # overrides base
+      FEATURE_X: "1" # adds
+    ports:
+      - "9090:9090" # concatenated with base 8080:8080
+    command: ["./serve"]
+
+  worker:
+    extends: web # local extends
+    command: ["./work"] # replaces web's command
+    environment:
+      ROLE: worker

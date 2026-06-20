@@ -83,6 +83,26 @@ Top-level `configs:` / `secrets:` referenced by a service are provisioned as
 sources and `uid`/`gid`/`mode` are warned (not enforced — bind mounts can't
 express them). Single-file bind support depends on the `container` runtime.
 
+## Composition: extends & include
+
+`Project.load` flattens composition before the model is used:
+
+- **`include:`** merges other Compose files into the project (the including file
+  wins on overlap); nested includes are resolved depth-first.
+- **`extends:`** inherits another service's config, from the same file or another
+  (`{service, file}`); cycles are detected.
+
+Merge rules (override wins): scalars/objects replace, maps (`environment`,
+`labels`, `sysctls`) merge by key, sequences (`ports`, `volumes`, ...)
+concatenate, and `depends_on` is unioned. This is pragmatic and Compose-flavored
+rather than a full implementation of every field-specific rule.
+
+## Build
+
+`build` long-form fields `no_cache`, `labels`, and `secrets` translate to
+`container build` flags (`--no-cache`, `--label`, `--secret`). `ssh`, `network`,
+and `cache_from` are decoded but warned (no `container build` equivalent).
+
 ## compose-validate
 
 A dependency-free tool to check a file parses and inspect the planned argv:

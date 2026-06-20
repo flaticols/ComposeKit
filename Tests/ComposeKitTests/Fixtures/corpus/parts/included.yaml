@@ -1,0 +1,9 @@
+# Pulled in via top-level `include` from include-main.yaml.
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: secret
+
+volumes:
+  dbdata:

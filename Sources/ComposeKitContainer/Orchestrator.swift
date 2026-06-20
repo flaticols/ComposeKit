@@ -44,7 +44,8 @@ public struct Orchestrator: Sendable {
         let order = try Planner.startOrder(project.file.services).filter { selected.contains($0) }
         for name in order {
             guard let svc = project.file.services[name] else { continue }
-            let image = try imageForService(name: name, svc: svc, forceBuild: build)
+            let image = try imageForService(
+                name: name, svc: svc, forceBuild: build, buildSecrets: resolved.secrets)
             warnUnsupported(name: name, svc: svc)
 
             // Wait on any `depends_on: condition: service_healthy` dependencies.
@@ -152,7 +153,10 @@ public struct Orchestrator: Sendable {
             }
         }
 
-        resolve(kind: "secret", defs: project.file.secrets, refsFor: { $0.secrets }, into: &secrets)
+        // Secret sources come from both service `secrets:` and `build.secrets`.
+        resolve(
+            kind: "secret", defs: project.file.secrets,
+            refsFor: { ($0.secrets ?? []) + ($0.build?.long?.secrets ?? []) }, into: &secrets)
         resolve(kind: "config", defs: project.file.configs, refsFor: { $0.configs }, into: &configs)
         return .init(configs: configs, secrets: secrets)
     }
@@ -176,9 +180,13 @@ public struct Orchestrator: Sendable {
         }
     }
 
-    private func imageForService(name: String, svc: Service, forceBuild: Bool) throws -> String {
+    private func imageForService(
+        name: String, svc: Service, forceBuild: Bool, buildSecrets: [String: String]
+    ) throws -> String {
         if svc.build != nil, forceBuild || svc.image == nil {
-            if let buildArgs = translator.buildArgs(service: name, svc) {
+            if let buildArgs = translator.buildArgs(
+                service: name, svc, resolvedSecrets: buildSecrets)
+            {
                 info("Building \(name) ...")
                 try runner.runChecked(buildArgs)
             }
@@ -330,6 +338,17 @@ public struct Orchestrator: Sendable {
             warn("service '\(name)': \(ignored.joined(separator: ", ")) "
                 + "\(ignored.count == 1 ? "has" : "have") no container equivalent and "
                 + "\(ignored.count == 1 ? "is" : "are") ignored")
+        }
+
+        // Build fields `container build` cannot express.
+        var build: [String] = []
+        if svc.build?.long?.ssh != nil { build.append("build.ssh") }
+        if svc.build?.long?.network != nil { build.append("build.network") }
+        if svc.build?.long?.cache_from != nil { build.append("build.cache_from") }
+        if !build.isEmpty {
+            warn("service '\(name)': \(build.joined(separator: ", ")) "
+                + "\(build.count == 1 ? "is" : "are") not supported by container build and "
+                + "\(build.count == 1 ? "is" : "are") ignored")
         }
     }
 }

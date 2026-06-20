@@ -20,6 +20,8 @@ public struct ComposeFile: Decodable, Sendable {
     public var volumes: [String: VolumeSpec?]?
     public var configs: [String: FileObjectSpec?]?
     public var secrets: [String: FileObjectSpec?]?
+    /// Other Compose files merged into this one (resolved away by `Project.load`).
+    public var include: [IncludeRef]?
 
     /// Decode a Compose file from a YAML string.
     public static func parse(yaml: String) throws -> ComposeFile {
@@ -87,6 +89,45 @@ public struct Service: Decodable, Sendable {
     /// References to top-level `configs:` / `secrets:`, mounted as files.
     public var configs: [ServiceFileRef]?
     public var secrets: [ServiceFileRef]?
+
+    /// Inherit another service's config (resolved away by `Project.load`).
+    public var extends: ExtendsRef?
+}
+
+/// `extends: base` or `extends: { service: base, file: other.yml }`.
+public struct ExtendsRef: Decodable, Sendable, Equatable {
+    public var service: String
+    public var file: String?
+
+    private enum CodingKeys: String, CodingKey { case service, file }
+
+    public init(from decoder: Decoder) throws {
+        if let c = try? decoder.singleValueContainer(), let s = try? c.decode(String.self) {
+            self.service = s
+            self.file = nil
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.service = try c.decode(String.self, forKey: .service)
+        self.file = try c.decodeIfPresent(String.self, forKey: .file)
+    }
+}
+
+/// A top-level `include` entry: a path string, or `{ path: ... }` (path may be
+/// a string or a list). `env_file`/`project_directory` are accepted but ignored.
+public struct IncludeRef: Decodable, Sendable, Equatable {
+    public var paths: [String]
+
+    private enum CodingKeys: String, CodingKey { case path }
+
+    public init(from decoder: Decoder) throws {
+        if let c = try? decoder.singleValueContainer(), let s = try? c.decode(String.self) {
+            self.paths = [s]
+            return
+        }
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.paths = try c.decode(StringOrList.self, forKey: .path).values
+    }
 }
 
 /// A top-level `configs:` / `secrets:` definition. The two share a shape; the
@@ -200,6 +241,12 @@ public enum BuildSpec: Decodable, Sendable {
         if case .long(let b) = self { return b.args }
         return nil
     }
+
+    /// The long-form block, if any (for the advanced fields below).
+    public var long: LongBuild? {
+        if case .long(let b) = self { return b }
+        return nil
+    }
 }
 
 public struct LongBuild: Decodable, Sendable {
@@ -207,6 +254,15 @@ public struct LongBuild: Decodable, Sendable {
     public var dockerfile: String?
     public var args: KeyValuePairs?
     public var target: String?
+
+    // Advanced build fields.
+    public var no_cache: Bool?
+    public var labels: KeyValuePairs?
+    public var secrets: [ServiceFileRef]?
+    // Decoded so files parse, but `container build` has no equivalent flag.
+    public var ssh: StringOrList?
+    public var network: String?
+    public var cache_from: [String]?
 }
 
 /// `ports` entry: `"8080:80"`, `8080`, or a long-form mapping.
