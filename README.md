@@ -37,7 +37,7 @@ Sources/ComposeKit/              # core — depends only on Yams
 Sources/ComposeKitContainer/     # runtime — depends on ComposeKit
   ContainerTranslator.swift # Service -> `container run/build` args  ← core mapping
   ContainerRunner.swift     # subprocess wrapper around `container`
-  Orchestrator.swift        # up / down / ps / logs
+  Orchestrator.swift        # up/down/ps/logs/exec/pull/stop/start/restart
   HealthChecker.swift       # healthcheck polling + service_healthy gating
 
 Sources/compose-validate/        # tiny CLI: parse / --plan a file (no deps)
