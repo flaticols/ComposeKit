@@ -1,0 +1,12 @@
+# Top-level include: db comes from parts/included.yaml; app is defined here and
+# depends on it. The including file wins on any overlap.
+name: include-demo
+include:
+  - parts/included.yaml
+services:
+  app:
+    image: app:latest
+    depends_on:
+      - db
+    ports:
+      - "3000:3000"

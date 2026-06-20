@@ -11,6 +11,7 @@ public enum ComposeError: Error, CustomStringConvertible {
     case envFileNotFound(String)
     case dependencyUnhealthy(String)
     case dependencyFailed(String, Int32)
+    case extendsCycle(String)
 
     public var description: String {
         switch self {
@@ -33,6 +34,8 @@ public enum ComposeError: Error, CustomStringConvertible {
             return "dependency '\(name)' did not become healthy in time"
         case .dependencyFailed(let name, let status):
             return "dependency '\(name)' did not complete successfully (exit \(status))"
+        case .extendsCycle(let name):
+            return "extends cycle detected involving service '\(name)'"
         }
     }
 }
@@ -112,7 +115,11 @@ public struct Project: Sendable {
 
         let rawYaml = try String(contentsOf: url, encoding: .utf8)
         let interpolated = try Interpolator.expand(rawYaml, variables: variables)
-        let file = try ComposeFile.parse(yaml: interpolated)
+        var file = try ComposeFile.parse(yaml: interpolated)
+
+        // Flatten composition: includes first (combine files), then extends.
+        file = try Composition.resolveIncludes(file, baseDir: base, variables: variables)
+        file = try Composition.resolveExtends(file, baseDir: base, variables: variables)
 
         let name = resolveName(override: projectName, file: file, composeURL: url)
         let active = resolveProfiles(flags: profiles, variables: variables)

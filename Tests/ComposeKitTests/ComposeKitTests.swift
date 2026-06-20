@@ -415,6 +415,116 @@ struct OneShotTests {
     }
 }
 
+@Suite("Merge")
+struct MergeTests {
+    private func parse(_ yaml: String, _ name: String) throws -> Service {
+        try ComposeFile.parse(yaml: yaml).services[name]!
+    }
+
+    @Test("override wins for scalars, maps merge, lists concatenate")
+    func merge() throws {
+        let base = try parse(
+            """
+            services:
+              s:
+                image: base:1
+                command: ["a"]
+                environment:
+                  KEEP: base
+                  OVERRIDE: base
+                ports: ["1:1"]
+            """, "s")
+        let over = try parse(
+            """
+            services:
+              s:
+                command: ["b"]
+                environment:
+                  OVERRIDE: over
+                  ADD: over
+                ports: ["2:2"]
+            """, "s")
+        let r = over.merged(onto: base)
+        #expect(r.image == "base:1")  // scalar from base (override absent)
+        #expect(r.command?.values == ["b"])  // override wins
+        let env = r.environment!.pairs()
+        #expect(env.contains("KEEP=base"))
+        #expect(env.contains("OVERRIDE=over"))
+        #expect(env.contains("ADD=over"))
+        #expect(r.ports?.count == 2)  // concatenated
+    }
+}
+
+@Suite("Extends & include")
+struct CompositionTests {
+    private func load(_ name: String) throws -> Project {
+        let url = Bundle.module.url(
+            forResource: name, withExtension: "yaml", subdirectory: "Fixtures/corpus")!
+        return try Project.load(
+            explicit: url.path, projectName: nil, cwd: url.deletingLastPathComponent())
+    }
+
+    @Test("extends merges across files and locally")
+    func extends() throws {
+        let p = try load("extends-main")
+        let web = p.file.services["web"]!
+        #expect(web.image == "app:1.0")  // inherited from parts/base.yaml
+        #expect(web.environment!.pairs().contains("LOG_LEVEL=debug"))  // override
+        #expect(web.environment!.pairs().contains("REGION=us-east-1"))  // inherited
+        #expect(web.ports?.count == 2)  // base 8080 + own 9090
+        #expect(web.command?.values == ["./serve"])
+        #expect(web.extends == nil)  // resolved away
+
+        let worker = p.file.services["worker"]!
+        #expect(worker.image == "app:1.0")  // via web -> base
+        #expect(worker.command?.values == ["./work"])
+        #expect(worker.environment!.pairs().contains("ROLE=worker"))
+    }
+
+    @Test("include pulls in services from another file")
+    func include() throws {
+        let p = try load("include-main")
+        #expect(Set(p.file.services.keys) == ["app", "db"])
+        #expect(p.file.services["db"]?.image == "postgres:16")
+        #expect(p.file.include == nil)  // resolved away
+    }
+
+    @Test("extends cycle is detected")
+    func cycle() throws {
+        let file = try ComposeFile.parse(
+            yaml: """
+                services:
+                  a:
+                    image: x
+                    extends: b
+                  b:
+                    image: y
+                    extends: a
+                """)
+        #expect(throws: ComposeError.self) {
+            _ = try Composition.resolveExtends(
+                file, baseDir: URL(fileURLWithPath: "/tmp"), variables: [:])
+        }
+    }
+}
+
+@Suite("Build translation")
+struct BuildTests {
+    @Test("advanced build fields translate to container build flags")
+    func buildArgs() throws {
+        let url = Bundle.module.url(
+            forResource: "build-advanced", withExtension: "yaml", subdirectory: "Fixtures/corpus")!
+        let svc = try ComposeFile.parse(yaml: String(contentsOf: url, encoding: .utf8))
+            .services["app"]!
+        let t = ContainerTranslator(
+            project: "p", baseDirectory: URL(fileURLWithPath: "/p"), hostEnv: [:])
+        let args = t.buildArgs(service: "app", svc, resolvedSecrets: ["build_token": "/h/tok"])!
+        #expect(args.contains("--no-cache"))
+        #expect(adjacent(args, "--label", "com.example.tier=web"))
+        #expect(adjacent(args, "--secret", "id=build_token,src=/h/tok"))
+    }
+}
+
 /// True if `value` immediately follows `flag` somewhere in `args`.
 private func adjacent(_ args: [String], _ flag: String, _ value: String) -> Bool {
     for i in args.indices.dropLast() where args[i] == flag && args[i + 1] == value {

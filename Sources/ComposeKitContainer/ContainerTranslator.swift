@@ -41,7 +41,12 @@ public struct ContainerTranslator: Sendable {
     // MARK: - Build
 
     /// `container build` args for a service with a `build` section.
-    public func buildArgs(service: String, _ svc: Service) -> [String]? {
+    ///
+    /// - Parameter resolvedSecrets: host paths for `build.secrets` sources,
+    ///   keyed by source name (built by the Orchestrator like run secrets).
+    public func buildArgs(
+        service: String, _ svc: Service, resolvedSecrets: [String: String] = [:]
+    ) -> [String]? {
         guard let build = svc.build else { return nil }
         let tag = svc.image ?? builtImageTag(service: service)
         var a = ["build", "--tag", tag]
@@ -53,6 +58,17 @@ public struct ContainerTranslator: Sendable {
         }
         if let args = build.args {
             for pair in args.pairs(hostEnv: hostEnv) { a += ["--build-arg", pair] }
+        }
+        if let long = build.long {
+            if long.no_cache == true { a += ["--no-cache"] }
+            if let labels = long.labels {
+                for pair in labels.pairs() { a += ["--label", pair] }
+            }
+            for ref in long.secrets?.sorted(by: { $0.source < $1.source }) ?? [] {
+                if let path = resolvedSecrets[ref.source] {
+                    a += ["--secret", "id=\(ref.source),src=\(path)"]
+                }
+            }
         }
         a += [resolvePath(build.contextPath)]
         return a
