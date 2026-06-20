@@ -96,7 +96,7 @@ struct TranslationTests {
         #expect(adjacent(args, "--publish", "8080:80"))
         #expect(adjacent(args, "--network", "demo-backend"))
         #expect(adjacent(args, "--network", "demo-frontend"))
-        #expect(adjacent(args, "--cpus", "0.5"))
+        #expect(adjacent(args, "--cpus", "1"))  // fractional 0.5 -> 1 vCPU
         #expect(adjacent(args, "--memory", "256m"))
         // image precedes the command
         let imageIdx = args.firstIndex(of: "demo-web:latest")!
@@ -128,6 +128,16 @@ struct TranslationTests {
         let args = translator().runArgs(service: "x", file.services["x"]!, image: "alpine")
         #expect(adjacent(args, "/bin/sh", "-c"))
         #expect(args.last == "echo hello")
+    }
+
+    @Test("fractional cpus are rounded up to whole vCPUs for container --cpus")
+    func cpuCount() {
+        #expect(ContainerTranslator.cpuCount("0.5") == "1")
+        #expect(ContainerTranslator.cpuCount("1.5") == "2")
+        #expect(ContainerTranslator.cpuCount("2") == "2")
+        #expect(ContainerTranslator.cpuCount("4") == "4")
+        #expect(ContainerTranslator.cpuCount("0") == nil)
+        #expect(ContainerTranslator.cpuCount("abc") == nil)
     }
 }
 
