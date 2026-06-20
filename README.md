@@ -4,6 +4,11 @@ The Docker Compose parsing & orchestration engine behind
 [`container-compose`](https://github.com/flaticols/container-compose) — a
 compatibility layer for [Apple's `container`](https://github.com/apple/container).
 
+> [!WARNING]
+> ComposeKit is in early development (pre-1.0). The API and behavior may change
+> between releases, and not every Compose feature is supported yet. Not
+> recommended for production use.
+
 ComposeKit is CLI-agnostic (no ArgumentParser dependency). It is split into two
 layers: a **runtime-agnostic spec core** and a **`container` runtime layer**.
 Frontends — the `container-compose` binary and the `container` CLI plugin — wire
@@ -50,7 +55,7 @@ live in `ComposeKitContainer` and are shared by every frontend.
 ## Use as a dependency
 
 ```swift
-.package(url: "https://github.com/flaticols/ComposeKit.git", from: "0.1.0"),
+.package(url: "https://github.com/flaticols/ComposeKit.git", from: "0.0.1"),
 ```
 
 ```swift
@@ -115,6 +120,23 @@ rather than a full implementation of every field-specific rule.
 `build` long-form fields `no_cache`, `labels`, and `secrets` translate to
 `container build` flags (`--no-cache`, `--label`, `--secret`). `ssh`, `network`,
 and `cache_from` are decoded but warned (no `container build` equivalent).
+
+## Orchestration
+
+The container layer drives the full lifecycle of a loaded project:
+
+```swift
+let orchestrator = Orchestrator(project: project, runner: ContainerRunner())
+
+try orchestrator.up(build: false, only: [])        // create + start in dep order
+try orchestrator.exec(service: "db",               // shell into a running service
+                      command: ["psql", "-U", "app"], interactive: true, tty: true)
+try orchestrator.logs(follow: true, only: ["web"]) // tail output
+try orchestrator.stop(only: [])                    // stop without removing
+try orchestrator.down(removeVolumes: false)        // stop + remove
+```
+
+Also available: `pull` (pre-fetch images), `start`, `restart`, and `ps`.
 
 ## compose-validate
 
