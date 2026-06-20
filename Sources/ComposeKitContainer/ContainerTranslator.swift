@@ -177,7 +177,9 @@ public struct ContainerTranslator: Sendable {
         if svc.tty == true { a += ["--tty"] }
 
         // Resource limits (deploy.resources.limits wins, then top-level shorthands).
-        if let cpus = svc.deploy?.resources?.limits?.cpus?.stringValue ?? svc.cpus?.stringValue {
+        if let raw = svc.deploy?.resources?.limits?.cpus?.stringValue ?? svc.cpus?.stringValue,
+            let cpus = Self.cpuCount(raw)
+        {
             a += ["--cpus", cpus]
         }
         if let mem = svc.deploy?.resources?.limits?.memory ?? svc.mem_limit {
@@ -215,6 +217,17 @@ public struct ContainerTranslator: Sendable {
     }
 
     // MARK: - Helpers
+
+    /// Map a Compose `cpus` value to `container --cpus`.
+    ///
+    /// Compose `cpus` is a fraction of CPU *time* (e.g. `0.5`), but Apple's
+    /// `container` expects an integer vCPU *count*. Round the request up to whole
+    /// vCPUs (minimum 1): `0.5 -> 1`, `1.5 -> 2`, `2 -> 2`. Returns `nil` for
+    /// non-positive or non-numeric values, so no `--cpus` flag is emitted.
+    static func cpuCount(_ raw: String) -> String? {
+        guard let value = Double(raw), value > 0 else { return nil }
+        return String(max(1, Int(value.rounded(.up))))
+    }
 
     /// Read-only bind-mount args for a service's config/secret refs, sorted by
     /// source name for deterministic output. Refs whose source wasn't resolved
