@@ -1,14 +1,17 @@
-//===----------------------------------------------------------------------===//
-// Translate Compose services into `container` CLI invocations.
-//
-// This is where compatibility decisions live. Anything Compose can express but
-// `container` cannot is marked with `UNSUPPORTED:` and either approximated or
-// skipped (with a warning emitted by the Orchestrator).
-//===----------------------------------------------------------------------===//
-
 import ComposeKit
 import Foundation
 
+/// Translates Compose `Service` definitions into Apple `container` CLI
+/// argument vectors (`container run` and `container build`).
+///
+/// This is where the runtime compatibility decisions live: anything Compose can
+/// express but `container` cannot is either approximated here or skipped (with a
+/// warning emitted by ``Orchestrator``). The translator is a pure value type —
+/// it never touches the filesystem or spawns processes, so its output is fully
+/// determined by its inputs and easy to test.
+///
+/// All resources are project-scoped: a service named `web` in project `demo`
+/// becomes the container `demo-web` on the `demo-default` network.
 public struct ContainerTranslator: Sendable {
     public let project: String
     public let baseDirectory: URL
@@ -40,10 +43,16 @@ public struct ContainerTranslator: Sendable {
 
     // MARK: - Build
 
-    /// `container build` args for a service with a `build` section.
+    /// Build the `container build` argument vector for a service's `build:` block.
     ///
-    /// - Parameter resolvedSecrets: host paths for `build.secrets` sources,
-    ///   keyed by source name (built by the Orchestrator like run secrets).
+    /// - Parameters:
+    ///   - service: the service name, used to derive the image tag when the
+    ///     service has no explicit `image:`.
+    ///   - svc: the service definition. Returns `nil` if it has no `build:`.
+    ///   - resolvedSecrets: host paths for `build.secrets` sources, keyed by
+    ///     source name (built by the ``Orchestrator``, as for run secrets).
+    /// - Returns: the argument vector following the `container` executable, or
+    ///   `nil` when the service does not build an image.
     public func buildArgs(
         service: String, _ svc: Service, resolvedSecrets: [String: String] = [:]
     ) -> [String]? {
@@ -89,12 +98,17 @@ public struct ContainerTranslator: Sendable {
         public static let none = ResolvedFileObjects()
     }
 
-    /// `container run` args for one service.
+    /// Build the `container run` argument vector for one service.
     ///
     /// - Parameters:
+    ///   - name: the service name, used for the container name and labels.
+    ///   - svc: the service definition to translate.
+    ///   - image: the image to run (resolved by the caller — an explicit
+    ///     `image:` or the tag produced by ``builtImageTag(service:)``).
     ///   - detach: run in the background (`--detach`). One-shot dependencies
     ///     gated by `service_completed_successfully` are run attached (`false`).
     ///   - files: resolved host paths for the service's configs/secrets.
+    /// - Returns: the argument vector following the `container` executable.
     public func runArgs(
         service name: String, _ svc: Service, image: String,
         detach: Bool = true, files: ResolvedFileObjects = .none

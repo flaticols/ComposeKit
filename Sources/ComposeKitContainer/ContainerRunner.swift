@@ -1,18 +1,24 @@
-//===----------------------------------------------------------------------===//
-// Thin wrapper around the `container` CLI.
-//
-// Option A: we drive the stable public CLI rather than the internal XPC API.
-// The executable is resolved from $CONTAINER_CLI, else `container` on PATH.
-//===----------------------------------------------------------------------===//
-
 import ComposeKit
 import Foundation
 
+/// Runs the `container` CLI as a subprocess.
+///
+/// ComposeKit drives the stable public `container` command line rather than the
+/// internal XPC API. The executable is resolved from the `CONTAINER_CLI`
+/// environment variable, falling back to `container` on `PATH` — set
+/// `CONTAINER_CLI` to point at a different binary (or a test shim).
+///
+/// Set ``dryRun`` to print commands without executing them, and ``verbose`` to
+/// trace each invocation to standard error.
 public struct ContainerRunner: Sendable {
+    /// When `true`, commands are traced but never executed; runs report success.
     public var dryRun: Bool
+    /// When `true`, every command is echoed to standard error before running.
     public var verbose: Bool
     private let executable: String
 
+    /// Create a runner, resolving the executable from `CONTAINER_CLI` (or
+    /// `container` on `PATH`).
     public init(dryRun: Bool = false, verbose: Bool = false) {
         self.dryRun = dryRun
         self.verbose = verbose
@@ -62,7 +68,8 @@ public struct ContainerRunner: Sendable {
         return p.terminationStatus
     }
 
-    /// Run, throwing if the command exits non-zero.
+    /// Run inheriting stdio, throwing ``RunnerError/nonZeroExit(command:status:)``
+    /// if the command exits non-zero.
     public func runChecked(_ args: [String]) throws {
         let status = try run(args)
         if status != 0 {
@@ -83,7 +90,9 @@ public struct ContainerRunner: Sendable {
         return (p.terminationStatus, String(data: data, encoding: .utf8) ?? "")
     }
 
+    /// Errors thrown by ``runChecked(_:)``.
     public enum RunnerError: Error, CustomStringConvertible {
+        /// A command exited with a non-zero status.
         case nonZeroExit(command: [String], status: Int32)
 
         public var description: String {

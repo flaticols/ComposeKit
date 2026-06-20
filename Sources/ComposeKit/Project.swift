@@ -1,6 +1,10 @@
 import Foundation
 import Yams
 
+/// Errors raised while locating, loading, resolving, or orchestrating a project.
+///
+/// Conforms to `CustomStringConvertible`, so a frontend can surface
+/// `String(describing:)` directly to the user.
 public enum ComposeError: Error, CustomStringConvertible {
     case fileNotFound([String])
     case dependencyCycle(String)
@@ -40,9 +44,18 @@ public enum ComposeError: Error, CustomStringConvertible {
     }
 }
 
-/// A loaded Compose file plus the resolved project identity and base directory.
+/// A fully resolved Compose project: the decoded ``ComposeFile`` plus the
+/// project name, base directory, interpolation variables, and active profiles.
+///
+/// Produce one with ``load(explicit:projectName:cwd:envFile:profiles:)``, which
+/// locates the file, interpolates `${VAR}` references, flattens `include:` and
+/// `extends:`, and resolves the project name and active profiles. The result is
+/// `Sendable` and ready to hand to ``Planner`` or, in the container layer,
+/// `Orchestrator`.
 public struct Project: Sendable {
+    /// The resolved project name (sanitized; scopes all container/network/volume names).
     public let name: String
+    /// The decoded, composition-flattened Compose model.
     public let file: ComposeFile
     /// Directory of the Compose file — relative paths resolve against this.
     public let baseDirectory: URL
@@ -102,6 +115,25 @@ public struct Project: Sendable {
         throw ComposeError.fileNotFound(candidateFilenames)
     }
 
+    /// Locate, load, and fully resolve a Compose project.
+    ///
+    /// The pipeline: locate the file, merge `.env` with the shell environment,
+    /// interpolate `${VAR}` references on the raw text, decode the model, flatten
+    /// `include:` then `extends:`, and resolve the project name and active
+    /// profiles.
+    ///
+    /// - Parameters:
+    ///   - explicit: an explicit file path (like `-f`); when `nil`, the first
+    ///     candidate found walking up from `cwd` is used.
+    ///   - projectName: overrides the project name (like `-p`); otherwise the
+    ///     top-level `name:` or the parent directory name is used.
+    ///   - cwd: the directory to resolve relative paths and search from.
+    ///   - envFile: an explicit env file (like `--env-file`); otherwise `.env`
+    ///     next to the Compose file is used if present.
+    ///   - profiles: profiles to activate, merged with `COMPOSE_PROFILES`.
+    /// - Returns: the resolved ``Project``.
+    /// - Throws: ``ComposeError`` (file not found, interpolation, extends cycle,
+    ///   missing env file) or a `DecodingError`.
     public static func load(
         explicit: String?,
         projectName: String?,

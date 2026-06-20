@@ -1,15 +1,15 @@
-//===----------------------------------------------------------------------===//
-// Typed model of a Compose file.
-//
-// This is intentionally a pragmatic subset of the compose-spec
-// (https://github.com/compose-spec/compose-spec). Fields that `container`
-// cannot yet express are still decoded (so files parse) but may be ignored at
-// translation time — see Translator for what is actually applied.
-//===----------------------------------------------------------------------===//
-
 import Foundation
 import Yams
 
+/// A decoded Compose file: services plus the top-level networks, volumes,
+/// configs, and secrets.
+///
+/// This is intentionally a pragmatic subset of the
+/// [compose-spec](https://github.com/compose-spec/compose-spec). Fields that
+/// `container` cannot yet express are still decoded (so real files parse) but
+/// may be ignored at translation time — see `ContainerTranslator` for what is
+/// actually applied. Decode one with ``parse(yaml:)``, or load and resolve a
+/// whole project with ``Project/load(explicit:projectName:cwd:envFile:profiles:)``.
 public struct ComposeFile: Decodable, Sendable {
     /// Deprecated and ignored, but still common in the wild — decoded so files
     /// that carry it don't surprise anyone (Compose itself only warns).
@@ -24,11 +24,26 @@ public struct ComposeFile: Decodable, Sendable {
     public var include: [IncludeRef]?
 
     /// Decode a Compose file from a YAML string.
+    ///
+    /// This performs decoding only — it does not interpolate `${VAR}` references
+    /// or resolve `include:`/`extends:`. Use
+    /// ``Project/load(explicit:projectName:cwd:envFile:profiles:)`` for the full
+    /// pipeline.
+    ///
+    /// - Parameter yaml: the Compose YAML document.
+    /// - Returns: the decoded model.
+    /// - Throws: a `DecodingError` if the YAML does not match the model.
     public static func parse(yaml: String) throws -> ComposeFile {
         try YAMLDecoder().decode(ComposeFile.self, from: yaml)
     }
 }
 
+/// A single Compose service.
+///
+/// A pragmatic subset of the compose-spec service keys, grouped below into the
+/// fields `ContainerTranslator` maps onto `container run`, the popular
+/// local-development fields, and fields that are decoded so files parse but have
+/// no `container` equivalent (the `Orchestrator` warns about those).
 public struct Service: Decodable, Sendable {
     public var image: String?
     public var build: BuildSpec?

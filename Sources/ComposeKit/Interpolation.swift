@@ -1,4 +1,3 @@
-//===----------------------------------------------------------------------===//
 // Compose variable interpolation and `.env` file loading.
 //
 // Interpolation runs on the raw YAML text before decoding (the pragmatic
@@ -12,12 +11,25 @@
 //   ${VAR:?err} error if VAR is unset OR empty
 //   ${VAR?err}  error if VAR is unset
 //   $$          literal '$'
-//===----------------------------------------------------------------------===//
 
 import Foundation
 
+/// Expands `$VAR` / `${VAR...}` references in Compose YAML and parses `.env`
+/// files.
+///
+/// Interpolation runs on the raw YAML text before decoding, the pragmatic
+/// approach used by most Compose reimplementations. It supports defaults
+/// (`${VAR:-def}`, `${VAR-def}`), alternates (`${VAR:+rep}`, `${VAR+rep}`),
+/// required values (`${VAR:?err}`, `${VAR?err}`), and `$$` for a literal `$`.
 public enum Interpolator {
     /// Expand `$VAR` / `${VAR...}` references in `text` using `variables`.
+    ///
+    /// - Parameters:
+    ///   - text: the raw text to expand (typically the Compose YAML).
+    ///   - variables: the values to substitute (`.env` merged with the shell env).
+    /// - Returns: the expanded text.
+    /// - Throws: ``ComposeError/interpolation(_:)`` for malformed syntax, or
+    ///   ``ComposeError/requiredVariable(_:_:)`` for an unset `${VAR:?err}`.
     public static func expand(_ text: String, variables: [String: String]) throws -> String {
         var out = ""
         let chars = Array(text)

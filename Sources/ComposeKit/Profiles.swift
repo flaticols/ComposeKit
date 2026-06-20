@@ -1,16 +1,15 @@
-//===----------------------------------------------------------------------===//
-// Profile activation — decide which services are "enabled" for a run.
-//
-// Compose rules (https://docs.docker.com/compose/how-tos/profiles/):
-//   • A service with no `profiles:` is always enabled.
-//   • A service with `profiles:` is enabled only when one of its profiles is
-//     active (via COMPOSE_PROFILES or `--profile`).
-//   • Naming a service explicitly enables it even if its profile is inactive,
-//     and also activates that service's own profiles.
-//   • Dependencies (`depends_on`) of an enabled service are pulled in even when
-//     their own profile is inactive.
-//===----------------------------------------------------------------------===//
-
+/// Decides which services are "enabled" for a run, following Compose
+/// [profile](https://docs.docker.com/compose/how-tos/profiles/) rules:
+///
+/// - A service with no `profiles:` is always enabled.
+/// - A service with `profiles:` is enabled only when one of its profiles is
+///   active (via `COMPOSE_PROFILES` or `--profile`).
+/// - Naming a service explicitly enables it even if its profile is inactive, and
+///   activates that service's own profiles.
+/// - Dependencies (`depends_on`) of an enabled service are pulled in even when
+///   their own profile is inactive.
+///
+/// ``Project/enabledServices(explicit:)`` is the usual entry point.
 public enum Profiles {
     /// Resolve the set of services to operate on.
     ///
