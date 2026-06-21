@@ -6,11 +6,6 @@ compatibility layer for [Apple's `container`](https://github.com/apple/container
 but it depends only on Yams and knows nothing about any container runtime — so it
 is usable on its own to read and reason about Compose files.
 
-> [!WARNING]
-> ComposeKit is in early development (pre-1.0). The API and behavior may change
-> between releases, and not every Compose feature is supported yet. Not
-> recommended for production use.
-
 ComposeKit parses a Compose file, interpolates `${VAR}` references, merges
 `.env` with the environment, flattens `include:` and `extends:`, filters
 services by profiles, and plans start order from `depends_on`. Mapping the
