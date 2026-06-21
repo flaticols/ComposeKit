@@ -133,9 +133,9 @@ public struct ContainerTranslator: Sendable {
             for f in envFiles.values { a += ["--env-file", resolvePath(f)] }
         }
 
-        // Ports.
-        if let ports = svc.ports {
-            for p in ports { a += ["--publish", p.publishArgument] }
+        // Ports (skipping forms container can't publish — see publishArgument).
+        for p in svc.ports ?? [] {
+            if let arg = publishArgument(p) { a += ["--publish", arg] }
         }
 
         // Volumes / mounts.
@@ -170,7 +170,7 @@ public struct ContainerTranslator: Sendable {
         if let platform = svc.platform { a += ["--platform", platform] }
         if let runtime = svc.runtime { a += ["--runtime", runtime] }
         if let shm = svc.shm_size?.stringValue { a += ["--shm-size", shm] }
-        for u in svc.ulimits?.arguments ?? [] { a += ["--ulimit", u] }
+        for u in ulimitArguments(svc.ulimits) { a += ["--ulimit", u] }
 
         // Interactive session: Compose `stdin_open` -> -i, `tty` -> -t.
         if svc.stdin_open == true { a += ["--interactive"] }
@@ -217,6 +217,41 @@ public struct ContainerTranslator: Sendable {
     }
 
     // MARK: - Helpers
+
+    /// Render a Compose port mapping as a `container --publish` argument, or
+    /// `nil` if `container` cannot publish it.
+    ///
+    /// `container` requires an explicit `host:container` port pair, so the
+    /// container-port-only short form (`"80"`, which Compose would assign an
+    /// ephemeral host port) is dropped — the ``Orchestrator`` warns instead. An
+    /// IPv6 `host_ip` is bracketed as the publish parser requires.
+    func publishArgument(_ port: PortMapping) -> String? {
+        switch port {
+        case .short(let s):
+            // Needs a host:container colon; a bare port/range can't be published.
+            return s.contains(":") ? s : nil
+        case .long(let p):
+            guard let published = p.published?.stringValue, !published.isEmpty else { return nil }
+            var arg = ""
+            if let host = p.host_ip {
+                arg += host.contains(":") ? "[\(host)]:" : "\(host):"
+            }
+            arg += "\(published):\(p.target)"
+            if let proto = p.`protocol` { arg += "/\(proto)" }
+            return arg
+        }
+    }
+
+    /// Render `ulimits` as sorted `name=value` / `name=soft:hard` argument values.
+    private func ulimitArguments(_ ulimits: Ulimits?) -> [String] {
+        guard let ulimits else { return [] }
+        return ulimits.limits.sorted { $0.key < $1.key }.map { name, value in
+            switch value {
+            case .single(let v): return "\(name)=\(v)"
+            case .range(let soft, let hard): return "\(name)=\(soft):\(hard)"
+            }
+        }
+    }
 
     /// Map a Compose `cpus` value to `container --cpus`.
     ///

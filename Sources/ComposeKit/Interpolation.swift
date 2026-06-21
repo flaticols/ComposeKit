@@ -102,19 +102,20 @@ public enum Interpolator {
 
     private static func apply(op: String, name: String, word: String, variables: [String: String]) throws -> String {
         let value = variables[name]
-        let isEmpty = (value ?? "").isEmpty
+        let resolved = value ?? ""
+        let isEmpty = resolved.isEmpty
         switch op {
-        case ":-": return isEmpty ? word : value!
+        case ":-": return isEmpty ? word : resolved
         case "-": return value ?? word
         case ":+": return (value != nil && !isEmpty) ? word : ""
         case "+": return value != nil ? word : ""
         case ":?":
             if isEmpty { throw ComposeError.requiredVariable(name, word) }
-            return value!
+            return resolved
         case "?":
             if value == nil { throw ComposeError.requiredVariable(name, word) }
-            return value!
-        default: return value ?? ""
+            return resolved
+        default: return resolved
         }
     }
 }

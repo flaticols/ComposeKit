@@ -9,9 +9,9 @@
 // This matches Docker for the common local-dev cases. It is not a full
 // implementation of every field-specific rule in the spec.
 
-extension KeyValuePairs {
+extension KeyValueMap {
     /// Merge two key/value collections, with `self` (the override) winning per key.
-    public func merging(over base: KeyValuePairs?) -> KeyValuePairs {
+    func merging(over base: KeyValueMap?) -> KeyValueMap {
         guard let base else { return self }
         var map = base.asMap()
         for (key, value) in asMap() { map.updateValue(value, forKey: key) }
@@ -78,7 +78,7 @@ func mergedDependsOn(_ base: DependsOn?, _ override: DependsOn?) -> DependsOn? {
 
 extension Service {
     /// Merge `self` (the override) on top of `base`, returning the combined service.
-    public func merged(onto base: Service) -> Service {
+    func merged(onto base: Service) -> Service {
         var r = base
 
         // Scalars and nested objects: override wins when present.
@@ -145,7 +145,7 @@ extension Service {
 extension ComposeFile {
     /// Merge `self` (the override) on top of `base`. Services present in both are
     /// merged service-wise; top-level maps merge by key. Used for `include`.
-    public func merged(onto base: ComposeFile) -> ComposeFile {
+    func merged(onto base: ComposeFile) -> ComposeFile {
         var r = base
         r.version = version ?? base.version
         r.name = name ?? base.name

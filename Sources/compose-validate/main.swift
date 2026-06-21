@@ -1,4 +1,3 @@
-//===----------------------------------------------------------------------===//
 // compose-validate — parse (and optionally plan) a Compose file via ComposeKit.
 //
 // A tiny, dependency-free CLI used both by humans and by the CI parity job to
@@ -9,7 +8,6 @@
 //   compose-validate --profile dev <file> # with profiles active
 //
 // Exit code is 0 only if every file parsed; non-zero if any failed.
-//===----------------------------------------------------------------------===//
 
 import ComposeKit
 import ComposeKitContainer
@@ -31,7 +29,7 @@ while i < args.count {
     switch arg {
     case "--plan":
         plan = true
-    case "--profile", "-p":
+    case "--profile":
         i += 1
         guard i < args.count else { fail("--profile needs a value") }
         profiles.append(contentsOf: args[i].split(separator: ",").map(String.init))
