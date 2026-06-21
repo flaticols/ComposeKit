@@ -26,12 +26,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Build combined DocC site
+      - name: Build DocC site
         run: |
           swift package --allow-writing-to-directory "$RUNNER_TEMP/docs" \
             generate-documentation \
-            --target ComposeKit --target ComposeKitContainer \
-            --enable-experimental-combined-documentation \
+            --target ComposeKit \
             --disable-indexing \
             --transform-for-static-hosting \
             --hosting-base-path ComposeKit \
