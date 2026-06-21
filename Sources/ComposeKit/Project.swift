@@ -30,7 +30,7 @@ public enum ComposeError: Error, CustomStringConvertible {
         case .interpolation(let message):
             return "interpolation error: \(message)"
         case .requiredVariable(let name, let message):
-            let detail = (message?.isEmpty == false) ? ": \(message!)" : ""
+            let detail = if let message, !message.isEmpty { ": \(message)" } else { "" }
             return "required variable '\(name)' is not set\(detail)"
         case .envFileNotFound(let path):
             return "env file not found: \(path)"

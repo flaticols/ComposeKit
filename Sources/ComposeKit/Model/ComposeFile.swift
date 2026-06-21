@@ -49,14 +49,14 @@ public struct Service: Decodable, Sendable {
     public var build: BuildSpec?
     public var command: StringOrList?
     public var entrypoint: StringOrList?
-    public var environment: KeyValuePairs?
+    public var environment: KeyValueMap?
     public var env_file: StringOrList?
     public var ports: [PortMapping]?
     public var expose: [ComposeScalar]?
     public var volumes: [VolumeMount]?
     public var networks: NameListOrMap?
     public var depends_on: DependsOn?
-    public var labels: KeyValuePairs?
+    public var labels: KeyValueMap?
     public var working_dir: String?
     public var user: String?
     public var container_name: String?
@@ -94,7 +94,7 @@ public struct Service: Decodable, Sendable {
     public var extra_hosts: ExtraHosts?
     public var network_mode: String?
     public var devices: [DeviceMapping]?
-    public var sysctls: KeyValuePairs?
+    public var sysctls: KeyValueMap?
     public var security_opt: [String]?
     public var stop_signal: String?
     public var stop_grace_period: ComposeScalar?
@@ -252,7 +252,7 @@ public enum BuildSpec: Decodable, Sendable {
         return nil
     }
 
-    public var args: KeyValuePairs? {
+    public var args: KeyValueMap? {
         if case .long(let b) = self { return b.args }
         return nil
     }
@@ -264,15 +264,16 @@ public enum BuildSpec: Decodable, Sendable {
     }
 }
 
+/// The long-form `build:` block.
 public struct LongBuild: Decodable, Sendable {
     public var context: String?
     public var dockerfile: String?
-    public var args: KeyValuePairs?
+    public var args: KeyValueMap?
     public var target: String?
 
     // Advanced build fields.
     public var no_cache: Bool?
-    public var labels: KeyValuePairs?
+    public var labels: KeyValueMap?
     public var secrets: [ServiceFileRef]?
     // Decoded so files parse, but `container build` has no equivalent flag.
     public var ssh: StringOrList?
@@ -280,7 +281,8 @@ public struct LongBuild: Decodable, Sendable {
     public var cache_from: [String]?
 }
 
-/// `ports` entry: `"8080:80"`, `8080`, or a long-form mapping.
+/// A `ports:` entry: `"8080:80"`, `8080`, or a long-form mapping. Held as
+/// parsed data; rendering to a `--publish` argument lives in the container layer.
 public enum PortMapping: Decodable, Sendable {
     case short(String)
     case long(LongPort)
@@ -295,23 +297,9 @@ public enum PortMapping: Decodable, Sendable {
             self = .long(try c.decode(LongPort.self))
         }
     }
-
-    /// Render as a `container --publish` argument.
-    public var publishArgument: String {
-        switch self {
-        case .short(let s):
-            return s
-        case .long(let p):
-            var lhs = ""
-            if let host = p.host_ip { lhs += "\(host):" }
-            if let published = p.published { lhs += "\(published.stringValue):" }
-            var arg = "\(lhs)\(p.target)"
-            if let proto = p.`protocol` { arg += "/\(proto)" }
-            return arg
-        }
-    }
 }
 
+/// The long-form `ports:` mapping (`{target, published, host_ip, protocol}`).
 public struct LongPort: Decodable, Sendable {
     public var target: Int
     public var published: ComposeScalar?
@@ -335,6 +323,7 @@ public enum VolumeMount: Decodable, Sendable {
     }
 }
 
+/// The long-form `volumes:` mount (`{type, source, target, read_only}`).
 public struct LongVolume: Decodable, Sendable {
     public var type: String?  // volume | bind | tmpfs
     public var source: String?
@@ -342,6 +331,7 @@ public struct LongVolume: Decodable, Sendable {
     public var read_only: Bool?
 }
 
+/// The `deploy:` block. Only `resources.limits` (cpus/memory) is applied.
 public struct Deploy: Decodable, Sendable {
     public var resources: Resources?
 
@@ -355,6 +345,7 @@ public struct Deploy: Decodable, Sendable {
     }
 }
 
+/// A `healthcheck:` block. Durations are Go-style strings (e.g. `30s`, `1m30s`).
 public struct Healthcheck: Decodable, Sendable {
     public var test: StringOrList?
     public var interval: String?
@@ -364,6 +355,7 @@ public struct Healthcheck: Decodable, Sendable {
     public var disable: Bool?
 }
 
+/// A top-level `networks:` definition.
 public struct NetworkSpec: Decodable, Sendable {
     public var driver: String?
     public var name: String?
@@ -383,9 +375,10 @@ public struct NetworkSpec: Decodable, Sendable {
     public var subnet: String? { ipam?.config?.first?.subnet }
 }
 
+/// A top-level `volumes:` definition.
 public struct VolumeSpec: Decodable, Sendable {
     public var driver: String?
     public var name: String?
     public var external: ExternalRef?
-    public var labels: KeyValuePairs?
+    public var labels: KeyValueMap?
 }

@@ -58,7 +58,7 @@ public enum StringOrList: Decodable, Sendable, Equatable {
 
 /// A `key=value` collection that is either a mapping or a `KEY=VALUE` list
 /// (e.g. `environment`, `labels`, `build.args`).
-public enum KeyValuePairs: Decodable, Sendable, Equatable {
+public enum KeyValueMap: Decodable, Sendable, Equatable {
     case map([String: ComposeScalar?])
     case list([String])
 
@@ -93,8 +93,8 @@ public enum KeyValuePairs: Decodable, Sendable, Equatable {
     }
 }
 
-/// A name->config mapping or a plain list of names (e.g. `depends_on`,
-/// service-level `networks`). We only need the set of names for orchestration.
+/// A name->config mapping or a plain list of names (e.g. a service's
+/// `networks:`). Only the set of names is needed for orchestration.
 public enum NameListOrMap: Decodable, Sendable, Equatable {
     case list([String])
     case map([String: AnyConfig])
@@ -123,8 +123,9 @@ public struct AnyConfig: Decodable, Sendable, Equatable {
     public init(from decoder: Decoder) throws {}
 }
 
-/// `ulimits` entry: either a single hard limit (`nofile: 65535`) or a
-/// `{soft, hard}` pair. Rendered as `name=value` or `name=soft:hard`.
+/// A `ulimits` value: either a single limit (`nofile: 65535`) or a
+/// `{soft, hard}` pair. Values are kept as strings since the spec allows both
+/// integer and string forms.
 public enum ULimitValue: Decodable, Sendable, Equatable {
     case single(String)
     case range(soft: String, hard: String)
@@ -143,14 +144,6 @@ public enum ULimitValue: Decodable, Sendable, Equatable {
             soft: try c.decode(ComposeScalar.self, forKey: .soft).stringValue,
             hard: try c.decode(ComposeScalar.self, forKey: .hard).stringValue)
     }
-
-    /// The value part of a `--ulimit name=...` argument.
-    public var argumentValue: String {
-        switch self {
-        case .single(let v): return v
-        case .range(let soft, let hard): return "\(soft):\(hard)"
-        }
-    }
 }
 
 /// `ulimits: { nofile: 65535, nproc: {soft: 1024, hard: 2048} }`.
@@ -160,11 +153,6 @@ public struct Ulimits: Decodable, Sendable, Equatable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
         self.limits = try c.decode([String: ULimitValue].self)
-    }
-
-    /// `--ulimit` argument values, sorted for determinism.
-    public var arguments: [String] {
-        limits.sorted { $0.key < $1.key }.map { "\($0.key)=\($0.value.argumentValue)" }
     }
 }
 

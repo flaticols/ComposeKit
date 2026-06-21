@@ -38,6 +38,8 @@ Sources/ComposeKit/              # core — depends only on Yams
   Profiles.swift        # profile activation (which services are enabled)
   Planner.swift         # depends_on topological sort
   Interpolation.swift   # ${VAR} / .env expansion
+  Composition.swift     # flatten include: + extends:
+  Merge.swift           # deep-merge rules for extends/include
 
 Sources/ComposeKitContainer/     # runtime — depends on ComposeKit
   ContainerTranslator.swift # Service -> `container run/build` args  ← core mapping
@@ -153,6 +155,12 @@ swift run compose-validate --profile tools compose.yaml # with a profile active
 ```sh
 swift build
 swift test
+```
+
+Lightweight, dependency-free micro-benchmarks (parse / interpolate / translate):
+
+```sh
+swift run -c release compose-bench
 ```
 
 ## Interop testing

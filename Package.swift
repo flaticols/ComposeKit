@@ -52,6 +52,12 @@ let package = Package(
             dependencies: ["ComposeKit", "ComposeKitContainer"],
             path: "Sources/compose-validate"
         ),
+        // Lightweight micro-benchmarks: `swift run -c release compose-bench`.
+        .executableTarget(
+            name: "compose-bench",
+            dependencies: ["ComposeKit", "ComposeKitContainer"],
+            path: "Sources/compose-bench"
+        ),
         .testTarget(
             name: "ComposeKitTests",
             dependencies: ["ComposeKit", "ComposeKitContainer"],

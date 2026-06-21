@@ -240,15 +240,13 @@ public struct Orchestrator: Sendable {
 
         // Remove project networks (default + declared).
         var networks = [translator.defaultNetwork]
-        networks += (project.file.networks?.keys ?? Dictionary<String, NetworkSpec?>().keys).map {
-            translator.networkName($0)
-        }
+        networks += (project.file.networks ?? [:]).keys.map { translator.networkName($0) }
         for net in networks {
             runner.runSilently(["network", "delete", net])
         }
 
         if removeVolumes {
-            for volName in project.file.volumes?.keys ?? Dictionary<String, VolumeSpec?>().keys {
+            for volName in (project.file.volumes ?? [:]).keys {
                 runner.runSilently(["volume", "delete", translator.volumeName(volName)])
             }
         }
@@ -316,7 +314,7 @@ public struct Orchestrator: Sendable {
     ///   - interactive: keep stdin open (`-i`).
     ///   - tty: allocate a TTY (`-t`).
     /// - Returns: the command's exit status.
-    /// - Throws: ``ComposeError/unknownService(_:)`` if the service is undeclared.
+    /// - Throws: `ComposeError.unknownService` if the service is undeclared.
     @discardableResult
     public func exec(
         service: String, command: [String], interactive: Bool = false, tty: Bool = false
@@ -457,6 +455,17 @@ public struct Orchestrator: Sendable {
             warn("service '\(name)': \(ignored.joined(separator: ", ")) "
                 + "\(ignored.count == 1 ? "has" : "have") no container equivalent and "
                 + "\(ignored.count == 1 ? "is" : "are") ignored")
+        }
+
+        // Ports container can't publish (container-port-only; no host port).
+        for port in svc.ports ?? [] where translator.publishArgument(port) == nil {
+            let text: String
+            switch port {
+            case .short(let s): text = s
+            case .long(let p): text = String(p.target)
+            }
+            warn("service '\(name)': port '\(text)' publishes only a container port; "
+                + "container cannot auto-assign a host port, skipping")
         }
 
         // Build fields `container build` cannot express.

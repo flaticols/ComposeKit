@@ -605,6 +605,193 @@ struct LifecycleTests {
         let firstStart = lines.firstIndex { $0.hasPrefix("start ") }!
         #expect(lastStop < firstStart)
     }
+
+    @Test("down stops in reverse order, removes the network, keeps volumes")
+    func down() throws {
+        let lines = try capture("down") { try $0.down(removeVolumes: false) }
+        let app = lines.firstIndex { $0.hasPrefix("stop proj-app") }
+        let db = lines.firstIndex { $0.hasPrefix("stop proj-db") }
+        #expect(app != nil && db != nil && app! < db!)  // dependent stops first
+        #expect(lines.contains("network delete proj-default"))
+        #expect(!lines.contains { $0.hasPrefix("volume delete") })
+    }
+}
+
+@Suite("Interpolation operators & errors")
+struct InterpolationOpsTests {
+    let vars = ["NAME": "web", "EMPTY": "", "TAG": "1.2.3"]
+
+    @Test("set-but-empty distinguishes colon from non-colon operators")
+    func emptyOperators() throws {
+        #expect(try Interpolator.expand("${EMPTY+yes}", variables: vars) == "yes")  // set -> rep
+        #expect(try Interpolator.expand("${EMPTY:+yes}", variables: vars) == "")  // empty -> ""
+        #expect(try Interpolator.expand("${EMPTY?x}", variables: vars) == "")  // set, no throw
+        #expect(try Interpolator.expand("${MISSING+yes}", variables: vars) == "")  // unset -> ""
+        #expect(try Interpolator.expand("${NAME-fb}", variables: vars) == "web")
+        #expect(try Interpolator.expand("${MISSING-fb}", variables: vars) == "fb")
+    }
+
+    @Test("required operators throw appropriately")
+    func required() {
+        #expect(throws: ComposeError.self) { try Interpolator.expand("${MISSING?gone}", variables: vars) }
+        #expect(throws: ComposeError.self) { try Interpolator.expand("${EMPTY:?empty}", variables: vars) }
+    }
+
+    @Test("malformed and non-reference dollars")
+    func malformed() throws {
+        #expect(throws: ComposeError.self) { try Interpolator.expand("${UNTERMINATED", variables: vars) }
+        #expect(try Interpolator.expand("ends with $", variables: vars) == "ends with $")
+        #expect(try Interpolator.expand("cost $5 today", variables: vars) == "cost $5 today")
+    }
+}
+
+@Suite("KeyValueMap & scalars")
+struct KeyValueMapTests {
+    private func env(_ yaml: String) throws -> KeyValueMap {
+        try ComposeFile.parse(yaml: yaml).services["s"]!.environment!
+    }
+
+    @Test("hostEnv pass-through fills bare keys and drops absent ones")
+    func passThrough() throws {
+        let e = try env("services:\n  s:\n    image: x\n    environment:\n      - PASSED\n      - SET=x\n")
+        let withHost = e.pairs(hostEnv: ["PASSED": "v"])
+        #expect(withHost.contains("PASSED=v"))
+        #expect(withHost.contains("SET=x"))
+        #expect(!e.pairs().contains { $0.hasPrefix("PASSED") })  // dropped without hostEnv
+    }
+
+    @Test("map form: null value falls back to hostEnv; scalar types normalize")
+    func mapForms() throws {
+        let e = try env(
+            "services:\n  s:\n    image: x\n    environment:\n      PASSED:\n      B: true\n      I: 8080\n      D: 0.5\n")
+        let pairs = e.pairs(hostEnv: ["PASSED": "v"])
+        #expect(pairs.contains("PASSED=v"))  // null value <- hostEnv
+        #expect(pairs.contains("B=true"))
+        #expect(pairs.contains("I=8080"))
+        #expect(pairs.contains("D=0.5"))
+    }
+}
+
+@Suite("Project name sanitize")
+struct SanitizeTests {
+    @Test("normalizes to lowercase [a-z0-9_-]")
+    func sanitize() {
+        #expect(Project.sanitize("My App!!") == "my-app")
+        #expect(Project.sanitize("a__b") == "a__b")
+        #expect(Project.sanitize("--x--") == "x")
+        #expect(Project.sanitize("!!!") == "compose")
+        #expect(Project.sanitize("Foo.Bar/Baz") == "foo-bar-baz")
+    }
+}
+
+@Suite("Merge depends_on")
+struct MergeDependsOnTests {
+    @Test("union with override condition winning")
+    func union() throws {
+        let base = try ComposeFile.parse(
+            yaml: "services:\n  s:\n    image: x\n    depends_on: [db, cache]\n").services["s"]!
+        let over = try ComposeFile.parse(
+            yaml: "services:\n  s:\n    depends_on:\n      db:\n        condition: service_healthy\n")
+            .services["s"]!
+        let m = over.merged(onto: base)
+        #expect(Set(m.depends_on?.names ?? []) == ["db", "cache"])
+        #expect(m.depends_on?.condition(for: "db") == "service_healthy")  // override wins
+        #expect(m.depends_on?.condition(for: "cache") == "service_started")  // default kept
+    }
+}
+
+@Suite("Error paths")
+struct ErrorPathTests {
+    private func project(_ yaml: String) throws -> Project {
+        Project(
+            name: "p", file: try ComposeFile.parse(yaml: yaml),
+            baseDirectory: URL(fileURLWithPath: "/tmp"), variables: [:])
+    }
+
+    @Test("up on a service with neither image nor build throws serviceMissingImage")
+    func missingImage() throws {
+        let orch = Orchestrator(
+            project: try project("services:\n  x: {}\n"), runner: ContainerRunner(dryRun: true))
+        #expect(throws: ComposeError.self) { try orch.up(build: false, only: []) }
+    }
+
+    @Test("exec on an unknown service throws unknownService")
+    func unknownExec() throws {
+        let orch = Orchestrator(
+            project: try project("services:\n  a:\n    image: x\n"),
+            runner: ContainerRunner(dryRun: true))
+        #expect(throws: ComposeError.self) { _ = try orch.exec(service: "nope", command: ["sh"]) }
+    }
+
+    @Test("load with a missing env file throws envFileNotFound")
+    func missingEnvFile() {
+        let url = Bundle.module.url(
+            forResource: "compose", withExtension: "yaml", subdirectory: "Fixtures")!
+        #expect(throws: ComposeError.self) {
+            _ = try Project.load(
+                explicit: url.path, projectName: nil, cwd: url.deletingLastPathComponent(),
+                envFile: "/no/such/env")
+        }
+    }
+
+    @Test("extends to an undeclared service throws")
+    func unknownExtends() throws {
+        let file = try ComposeFile.parse(
+            yaml: "services:\n  a:\n    image: x\n    extends: ghost\n")
+        #expect(throws: ComposeError.self) {
+            _ = try Composition.resolveExtends(
+                file, baseDir: URL(fileURLWithPath: "/tmp"), variables: [:])
+        }
+    }
+}
+
+@Suite("Planner dangling deps")
+struct PlannerDanglingTests {
+    @Test("depends_on to an undeclared service is ignored")
+    func dangling() throws {
+        let file = try ComposeFile.parse(
+            yaml: "services:\n  a:\n    image: x\n    depends_on: [ghost]\n")
+        #expect(try Planner.startOrder(file.services) == ["a"])
+    }
+}
+
+@Suite("Port publishing")
+struct PortPublishTests {
+    private func translator() -> ContainerTranslator {
+        ContainerTranslator(project: "p", baseDirectory: URL(fileURLWithPath: "/p"), hostEnv: [:])
+    }
+    private func service(_ ports: String) throws -> Service {
+        try ComposeFile.parse(yaml: "services:\n  s:\n    image: x\n    ports:\n\(ports)").services["s"]!
+    }
+
+    @Test("a bare container port is not published (container can't auto-assign)")
+    func barePort() throws {
+        let args = translator().runArgs(service: "s", try service("      - \"80\"\n"), image: "x")
+        #expect(!args.contains("--publish"))
+    }
+
+    @Test("a host:container port is published verbatim")
+    func hostPort() throws {
+        let args = translator().runArgs(service: "s", try service("      - \"8080:80\"\n"), image: "x")
+        #expect(adjacent(args, "--publish", "8080:80"))
+    }
+
+    @Test("an IPv6 host_ip is bracketed")
+    func ipv6() throws {
+        let svc = try service("      - host_ip: \"::1\"\n        published: 8080\n        target: 80\n")
+        #expect(adjacent(translator().runArgs(service: "s", svc, image: "x"), "--publish", "[::1]:8080:80"))
+    }
+}
+
+@Suite("EnvFile edge cases")
+struct EnvFileEdgeTests {
+    @Test("inline comments and quote escapes")
+    func edges() {
+        #expect(EnvFile.parse("URL=http://x#frag")["URL"] == "http://x#frag")  // no space -> not a comment
+        #expect(EnvFile.parse("URL=http://x #frag")["URL"] == "http://x")  // space -> comment
+        #expect(EnvFile.parse("M=\"a\\nb\"")["M"] == "a\nb")  // double quotes unescape \n
+        #expect(EnvFile.parse("S='a\\nb'")["S"] == "a\\nb")  // single quotes keep literal
+    }
 }
 
 /// True if `value` immediately follows `flag` somewhere in `args`.
