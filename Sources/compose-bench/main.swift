@@ -9,7 +9,6 @@
 // Run with:  swift run -c release compose-bench   (debug numbers are meaningless)
 
 import ComposeKit
-import ComposeKitContainer
 import Foundation
 
 // Accumulator that consumes each result so the optimizer can't elide the work.
@@ -80,14 +79,6 @@ bench("Interpolator.expand") { try Interpolator.expand(yaml, variables: vars).co
 bench("ComposeFile.parse") { try ComposeFile.parse(yaml: yaml).services.count }
 bench("expand + parse (pipeline)") {
     try ComposeFile.parse(yaml: Interpolator.expand(yaml, variables: vars)).services.count
-}
-
-let file = try ComposeFile.parse(yaml: yaml)
-let translator = ContainerTranslator(
-    project: "bench", baseDirectory: URL(fileURLWithPath: "/proj"), hostEnv: vars)
-let web = file.services["web"]!
-bench("ContainerTranslator.runArgs") {
-    translator.runArgs(service: "web", web, image: "web:1.2.3").count
 }
 
 // Keep the accumulator observably alive.

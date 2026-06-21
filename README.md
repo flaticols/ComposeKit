@@ -1,18 +1,20 @@
 # ComposeKit
 
-The Docker Compose parsing & orchestration engine behind
-[`container-compose`](https://github.com/flaticols/container-compose) — a
-compatibility layer for [Apple's `container`](https://github.com/apple/container).
+A runtime-agnostic Docker Compose parsing engine in Swift. It is the spec core
+behind [`container-compose`](https://github.com/flaticols/container-compose) (a
+compatibility layer for [Apple's `container`](https://github.com/apple/container)),
+but it depends only on Yams and knows nothing about any container runtime — so it
+is usable on its own to read and reason about Compose files.
 
 > [!WARNING]
 > ComposeKit is in early development (pre-1.0). The API and behavior may change
 > between releases, and not every Compose feature is supported yet. Not
 > recommended for production use.
 
-ComposeKit is CLI-agnostic (no ArgumentParser dependency). It is split into two
-layers: a **runtime-agnostic spec core** and a **`container` runtime layer**.
-Frontends — the `container-compose` binary and the `container` CLI plugin — wire
-the container layer into a command surface.
+ComposeKit parses a Compose file, interpolates `${VAR}` references, merges
+`.env` with the environment, flattens `include:` and `extends:`, filters
+services by profiles, and plans start order from `depends_on`. Mapping the
+parsed model onto a specific container runtime lives in the consuming frontend.
 
 ## Documentation
 
@@ -30,9 +32,9 @@ swift package --disable-sandbox preview-documentation --target ComposeKit
 ## Modules
 
 ```
-Sources/ComposeKit/              # core — depends only on Yams
+Sources/ComposeKit/
   Model/
-    ComposeFile.swift   # typed compose-spec subset (popular local-dev fields)
+    ComposeFile.swift   # typed compose-spec subset
     Scalars.swift       # polymorphic decoders (string|list|map, ulimits, …)
   Project.swift         # locate + load + name + profile resolution
   Profiles.swift        # profile activation (which services are enabled)
@@ -41,67 +43,42 @@ Sources/ComposeKit/              # core — depends only on Yams
   Composition.swift     # flatten include: + extends:
   Merge.swift           # deep-merge rules for extends/include
 
-Sources/ComposeKitContainer/     # runtime — depends on ComposeKit
-  ContainerTranslator.swift # Service -> `container run/build` args  ← core mapping
-  ContainerRunner.swift     # subprocess wrapper around `container`
-  Orchestrator.swift        # up/down/ps/logs/exec/pull/stop/start/restart
-  HealthChecker.swift       # healthcheck polling + service_healthy gating
-
-Sources/compose-validate/        # tiny CLI: parse / --plan a file (no deps)
+Sources/compose-validate/    # tiny CLI: does ComposeKit parse a file? (no deps)
+Sources/compose-bench/       # lightweight micro-benchmarks
 ```
-
-The core knows nothing about `container`; anyone wanting just to parse the spec
-can depend on `ComposeKit` alone. The container-specific compatibility decisions
-live in `ComposeKitContainer` and are shared by every frontend.
 
 ## Use as a dependency
 
 ```swift
-.package(url: "https://github.com/flaticols/ComposeKit.git", from: "0.0.1"),
+.package(url: "https://github.com/flaticols/ComposeKit.git", from: "0.0.2"),
 ```
 
 ```swift
 .target(
     name: "YourTool",
-    dependencies: [
-        // Spec parsing only:
-        .product(name: "ComposeKit", package: "ComposeKit"),
-        // …plus the container mapping/orchestration:
-        .product(name: "ComposeKitContainer", package: "ComposeKit"),
-    ]
+    dependencies: [.product(name: "ComposeKit", package: "ComposeKit")]
 )
+```
+
+```swift
+import ComposeKit
+
+let project = try Project.load(
+    explicit: nil, projectName: nil,
+    cwd: URL(fileURLWithPath: FileManager.default.currentDirectoryPath),
+    profiles: ["tools"])
+
+let enabled = project.enabledServices()                       // honors profiles + depends_on
+let order = try Planner.startOrder(project.file.services)     // dependency order
+    .filter { enabled.contains($0) }
 ```
 
 ## Profiles
 
-Services with a `profiles:` key are started only when one of their profiles is
-active — via `--profile` (frontends) or `COMPOSE_PROFILES`. Unprofiled services
-always run; dependencies of an enabled service are pulled in regardless.
-
-```swift
-let project = try Project.load(explicit: nil, projectName: nil, cwd: cwd,
-                               profiles: ["tools"])
-let enabled = project.enabledServices()   // honors profiles + depends_on
-```
-
-## Dependency conditions
-
-`depends_on` conditions are honored during `up`:
-
-- `service_started` — ordering only (topological).
-- `service_healthy` — gated by polling the dependency's `healthcheck`.
-- `service_completed_successfully` — the dependency is run **attached** (to
-  completion); a non-zero exit aborts `up`. Ideal for one-shot migration/seed
-  steps that must finish before dependents start.
-
-## Configs & secrets
-
-Top-level `configs:` / `secrets:` referenced by a service are provisioned as
-**read-only file bind mounts** — secrets at `/run/secrets/<name>`, configs at
-`/<name>` (or an explicit `target:`). `file:` sources mount directly;
-`content:`/`environment:` sources are materialized to a temp file. `external:`
-sources and `uid`/`gid`/`mode` are warned (not enforced — bind mounts can't
-express them). Single-file bind support depends on the `container` runtime.
+Services with a `profiles:` key are enabled only when one of their profiles is
+active — via the `profiles:` argument to `Project.load` or `COMPOSE_PROFILES`.
+Unprofiled services always run; dependencies of an enabled service are pulled in
+regardless. `Project.enabledServices(explicit:)` resolves the set.
 
 ## Composition: extends & include
 
@@ -113,41 +90,17 @@ express them). Single-file bind support depends on the `container` runtime.
   (`{service, file}`); cycles are detected.
 
 Merge rules (override wins): scalars/objects replace, maps (`environment`,
-`labels`, `sysctls`) merge by key, sequences (`ports`, `volumes`, ...)
-concatenate, and `depends_on` is unioned. This is pragmatic and Compose-flavored
-rather than a full implementation of every field-specific rule.
-
-## Build
-
-`build` long-form fields `no_cache`, `labels`, and `secrets` translate to
-`container build` flags (`--no-cache`, `--label`, `--secret`). `ssh`, `network`,
-and `cache_from` are decoded but warned (no `container build` equivalent).
-
-## Orchestration
-
-The container layer drives the full lifecycle of a loaded project:
-
-```swift
-let orchestrator = Orchestrator(project: project, runner: ContainerRunner())
-
-try orchestrator.up(build: false, only: [])        // create + start in dep order
-try orchestrator.exec(service: "db",               // shell into a running service
-                      command: ["psql", "-U", "app"], interactive: true, tty: true)
-try orchestrator.logs(follow: true, only: ["web"]) // tail output
-try orchestrator.stop(only: [])                    // stop without removing
-try orchestrator.down(removeVolumes: false)        // stop + remove
-```
-
-Also available: `pull` (pre-fetch images), `start`, `restart`, and `ps`.
+`labels`, `sysctls`) merge by key, sequences (`ports`, `volumes`, …) concatenate,
+and `depends_on` is unioned. Pragmatic and Compose-flavored rather than a full
+implementation of every field-specific rule.
 
 ## compose-validate
 
-A dependency-free tool to check a file parses and inspect the planned argv:
+A small CLI to check that a file parses:
 
 ```sh
 swift run compose-validate compose.yaml                 # does it parse?
-swift run compose-validate --plan compose.yaml          # show `container` argv
-swift run compose-validate --profile tools compose.yaml # with a profile active
+swift run compose-validate --profile tools compose.yaml # report profile-active services
 ```
 
 ## Build & test
@@ -157,7 +110,7 @@ swift build
 swift test
 ```
 
-Lightweight, dependency-free micro-benchmarks (parse / interpolate / translate):
+Lightweight, dependency-free micro-benchmarks (parse / interpolate):
 
 ```sh
 swift run -c release compose-bench
@@ -165,10 +118,8 @@ swift run -c release compose-bench
 
 ## Interop testing
 
-CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) validates parsing &
-translation fidelity — Apple's `container` is macOS/Virtualization-only and
-cannot run in CI, so the workflow proves *we parse what the spec and docker
-parse and emit the argv we intend*, not that containers boot:
+CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) validates parsing
+fidelity against external sources of truth:
 
 - **swift build/test** on macOS (incl. a test that parses every file in
   `Tests/.../Fixtures/corpus`).
@@ -177,10 +128,10 @@ parse and emit the argv we intend*, not that containers boot:
 - **docker parity** — `Scripts/parity.sh` asserts `docker compose config` and
   `compose-validate` both accept each corpus file.
 
-A second scheduled workflow
-([`nightly-schema.yml`](.github/workflows/nightly-schema.yml)) refreshes the
-vendored schema from upstream each night, re-validates the fixtures and runs the
-tests, and opens a PR when the spec changed — so spec drift surfaces early.
+A scheduled workflow ([`nightly-schema.yml`](.github/workflows/nightly-schema.yml))
+refreshes the vendored schema from upstream each night, re-validates the fixtures
+and runs the tests, and opens a PR when the spec changed — so spec drift surfaces
+early.
 
 ## License
 
