@@ -435,3 +435,60 @@ struct ErrorPathTests {
         }
     }
 }
+
+@Suite("Multi-file load")
+struct MultiFileTests {
+    private func write(_ files: [String: String], _ tag: String) throws -> URL {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ckmf-\(tag)-\(getpid())", isDirectory: true)
+        try? FileManager.default.removeItem(at: dir)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        for (name, body) in files {
+            try body.write(to: dir.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+        return dir
+    }
+
+    @Test("explicit files merge in order: later wins, lists concatenate")
+    func explicitMerge() throws {
+        let dir = try write([
+            "base.yaml":
+                "name: app\nservices:\n  web:\n    image: nginx:1\n    ports: [\"80:80\"]\n    environment:\n      A: base\n",
+            "override.yaml":
+                "services:\n  web:\n    image: nginx:2\n    ports: [\"443:443\"]\n    environment:\n      B: over\n",
+        ], "explicit")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let p = try Project.load(files: ["base.yaml", "override.yaml"], projectName: nil, cwd: dir)
+        let web = p.file.services["web"]!
+        #expect(web.image == "nginx:2")  // override wins
+        #expect(web.ports?.count == 2)  // concatenated
+        let env = web.environment!.pairs()
+        #expect(env.contains("A=base") && env.contains("B=over"))
+        #expect(p.name == "app")
+    }
+
+    @Test("compose.override.yaml is auto-merged when no files are given")
+    func autoOverride() throws {
+        let dir = try write([
+            "compose.yaml": "name: app\nservices:\n  web:\n    image: nginx:1\n",
+            "compose.override.yaml":
+                "services:\n  web:\n    image: nginx:2\n    environment:\n      DEBUG: \"1\"\n",
+        ], "auto")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let p = try Project.load(files: [], projectName: nil, cwd: dir)
+        let web = p.file.services["web"]!
+        #expect(web.image == "nginx:2")  // override wins
+        #expect(web.environment?.pairs().contains("DEBUG=1") == true)
+    }
+
+    @Test("explicit files disable override auto-loading")
+    func explicitNoAutoOverride() throws {
+        let dir = try write([
+            "compose.yaml": "name: app\nservices:\n  web:\n    image: nginx:1\n",
+            "compose.override.yaml": "services:\n  web:\n    image: nginx:2\n",
+        ], "noauto")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let p = try Project.load(files: ["compose.yaml"], projectName: nil, cwd: dir)
+        #expect(p.file.services["web"]?.image == "nginx:1")  // override NOT applied
+    }
+}

@@ -141,23 +141,81 @@ public struct Project: Sendable {
         envFile: String? = nil,
         profiles: [String] = []
     ) throws -> Project {
-        let url = try locate(explicit: explicit, cwd: cwd)
-        let base = url.deletingLastPathComponent()
+        try load(
+            files: explicit.map { [$0] } ?? [],
+            projectName: projectName, cwd: cwd, envFile: envFile, profiles: profiles)
+    }
+
+    /// Override files auto-loaded (in this priority) next to the primary file
+    /// when no explicit `-f` files are given.
+    static let overrideFilenames = [
+        "compose.override.yaml", "compose.override.yml",
+        "docker-compose.override.yaml", "docker-compose.override.yml",
+    ]
+
+    /// Locate, load, and fully resolve a project from one or more Compose files.
+    ///
+    /// With no `files`, the primary file is discovered by walking up from `cwd`
+    /// and a sibling `compose.override.yaml` (if present) is merged on top —
+    /// matching Docker Compose. With explicit `files`, they are merged in order
+    /// (later wins) and no override is auto-loaded; the first file's directory is
+    /// the project directory. Each file is interpolated and has `include:` /
+    /// `extends:` flattened before merging.
+    ///
+    /// - Parameters:
+    ///   - files: explicit Compose file paths (like repeated `-f`); empty =
+    ///     auto-discover + auto-override.
+    ///   - projectName: overrides the project name (like `-p`).
+    ///   - cwd: directory to resolve relative paths and search from.
+    ///   - envFile: explicit env file (like `--env-file`); else `.env` if present.
+    ///   - profiles: profiles to activate, merged with `COMPOSE_PROFILES`.
+    public static func load(
+        files: [String],
+        projectName: String?,
+        cwd: URL,
+        envFile: String? = nil,
+        profiles: [String] = []
+    ) throws -> Project {
+        let urls = try resolveFileList(files, cwd: cwd)
+        let base = urls[0].deletingLastPathComponent()
         let variables = try loadVariables(envFile: envFile, baseDirectory: base, cwd: cwd)
 
-        let rawYaml = try String(contentsOf: url, encoding: .utf8)
-        let interpolated = try Interpolator.expand(rawYaml, variables: variables)
-        var file = try ComposeFile.parse(yaml: interpolated)
+        var merged: ComposeFile?
+        for url in urls {
+            let raw = try String(contentsOf: url, encoding: .utf8)
+            var file = try ComposeFile.parse(yaml: Interpolator.expand(raw, variables: variables))
+            let dir = url.deletingLastPathComponent()
+            // Flatten composition per file: includes first, then extends.
+            file = try Composition.resolveIncludes(file, baseDir: dir, variables: variables)
+            file = try Composition.resolveExtends(file, baseDir: dir, variables: variables)
+            merged = merged.map { file.merged(onto: $0) } ?? file
+        }
+        guard let file = merged else { throw ComposeError.fileNotFound(candidateFilenames) }
 
-        // Flatten composition: includes first (combine files), then extends.
-        file = try Composition.resolveIncludes(file, baseDir: base, variables: variables)
-        file = try Composition.resolveExtends(file, baseDir: base, variables: variables)
-
-        let name = resolveName(override: projectName, file: file, composeURL: url)
+        let name = resolveName(override: projectName, file: file, composeURL: urls[0])
         let active = resolveProfiles(flags: profiles, variables: variables)
         return Project(
             name: name, file: file, baseDirectory: base,
             variables: variables, activeProfiles: active)
+    }
+
+    /// Expand the `-f` list into URLs. Empty list = discover the primary file and
+    /// append a sibling override file if one exists.
+    static func resolveFileList(_ files: [String], cwd: URL) throws -> [URL] {
+        guard files.isEmpty else {
+            return try files.map { try locate(explicit: $0, cwd: cwd) }
+        }
+        let primary = try locate(explicit: nil, cwd: cwd)
+        var urls = [primary]
+        let dir = primary.deletingLastPathComponent()
+        for name in overrideFilenames {
+            let url = dir.appendingPathComponent(name)
+            if FileManager.default.fileExists(atPath: url.path) {
+                urls.append(url)
+                break
+            }
+        }
+        return urls
     }
 
     /// Active profiles: `--profile` flags plus a comma-separated COMPOSE_PROFILES.
