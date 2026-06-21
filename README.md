@@ -89,6 +89,10 @@ Merge rules (override wins): scalars/objects replace, maps (`environment`,
 and `depends_on` is unioned. Pragmatic and Compose-flavored rather than a full
 implementation of every field-specific rule.
 
+`Project.load(files:)` applies the same merge across **multiple files** (like
+repeated `-f`), in order. With no files it auto-discovers the primary file and
+merges a sibling `compose.override.yaml` if present (Docker-compatible).
+
 ## compose-validate
 
 A small CLI to check that a file parses:
