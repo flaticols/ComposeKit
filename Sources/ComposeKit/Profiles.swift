@@ -6,8 +6,9 @@
 ///   active (via `COMPOSE_PROFILES` or `--profile`).
 /// - Naming a service explicitly enables it even if its profile is inactive, and
 ///   activates that service's own profiles.
-/// - Dependencies (`depends_on`) of an enabled service are pulled in even when
-///   their own profile is inactive.
+/// - Required dependencies (`depends_on`) of an enabled service are pulled in
+///   even when their own profile is inactive. A dependency declared with
+///   `required: false` is only pulled in when its own profile is active.
 ///
 /// ``Project/enabledServices(explicit:)`` is the usual entry point.
 public enum Profiles {
@@ -41,10 +42,13 @@ public enum Profiles {
             enabled = Set(explicit.filter { services[$0] != nil })
         }
 
-        // Pull in dependencies transitively, regardless of their profile.
+        // Pull in dependencies transitively. A required dependency joins
+        // regardless of its profile; an optional one only if its profile is active.
         var queue = Array(enabled)
         while let name = queue.popLast() {
-            for dep in services[name]?.depends_on?.names ?? [] where services[dep] != nil {
+            guard let deps = services[name]?.depends_on else { continue }
+            for dep in deps.names where services[dep] != nil {
+                guard deps.isRequired(dep) || matchesActiveProfile(dep) else { continue }
                 if enabled.insert(dep).inserted { queue.append(dep) }
             }
         }

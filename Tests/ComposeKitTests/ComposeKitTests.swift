@@ -194,6 +194,75 @@ struct ProfileTests {
             flags: ["x"], variables: ["COMPOSE_PROFILES": "tools, debug"])
         #expect(active == ["x", "tools", "debug"])
     }
+
+    /// `ui` (profile ui) needs `api` and optionally `local-db` (profile local-db).
+    private func optionalDeps(required: Bool) throws -> [String: Service] {
+        let yaml = """
+            services:
+              ui:
+                image: ui
+                profiles: ["ui"]
+                depends_on:
+                  api:
+                    condition: service_started
+                  local-db:
+                    condition: service_started
+                    required: \(required)
+              api:
+                image: api
+              local-db:
+                image: db
+                profiles: ["local-db"]
+            """
+        return try ComposeFile.parse(yaml: yaml).services
+    }
+
+    @Test("an optional dependency joins only when its own profile is active")
+    func optionalDependency() throws {
+        let services = try optionalDeps(required: false)
+        #expect(services["ui"]?.depends_on?.isRequired("local-db") == false)
+        #expect(services["ui"]?.depends_on?.isRequired("api") == true)
+        #expect(Profiles.enabled(services: services, active: ["ui"]) == ["ui", "api"])
+        #expect(Profiles.enabled(services: services, active: [], explicit: ["ui"]) == ["ui", "api"])
+        #expect(
+            Profiles.enabled(services: services, active: ["ui", "local-db"])
+                == ["ui", "api", "local-db"])
+    }
+
+    @Test("a required dependency is pulled in despite an inactive profile")
+    func requiredDependency() throws {
+        let services = try optionalDeps(required: true)
+        #expect(Profiles.enabled(services: services, active: ["ui"]) == ["ui", "api", "local-db"])
+    }
+}
+
+@Suite("Service networks")
+struct ServiceNetworkTests {
+    @Test("list form, map form with null entries, and aliases")
+    func forms() throws {
+        let yaml = """
+            services:
+              a:
+                image: x
+                networks: [frontend, backend]
+              b:
+                image: x
+                networks:
+                  frontend:
+                  backend:
+                    aliases: [db, primary]
+                    ipv4_address: 10.5.0.10
+            """
+        let services = try ComposeFile.parse(yaml: yaml).services
+        let a = services["a"]?.networks
+        let b = services["b"]?.networks
+        #expect(a?.names == ["frontend", "backend"])
+        #expect(a?.aliases(on: "frontend") == [])
+        #expect(b?.names == ["backend", "frontend"])
+        #expect(b?.aliases(on: "frontend") == [])
+        #expect(b?.aliases(on: "backend") == ["db", "primary"])
+        if case .map(let m) = b { #expect(m["backend"]??.ipv4_address == "10.5.0.10") } else { Issue.record("expected map form") }
+    }
 }
 
 @Suite("Merge")
