@@ -45,7 +45,7 @@ Sources/compose-bench/       # lightweight micro-benchmarks
 ## Use as a dependency
 
 ```swift
-.package(url: "https://github.com/flaticols/ComposeKit.git", from: "0.0.4"),
+.package(url: "https://github.com/flaticols/ComposeKit.git", from: "0.0.5"),
 ```
 
 ```swift
