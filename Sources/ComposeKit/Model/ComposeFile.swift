@@ -54,7 +54,7 @@ public struct Service: Decodable, Sendable {
     public var ports: [PortMapping]?
     public var expose: [ComposeScalar]?
     public var volumes: [VolumeMount]?
-    public var networks: NameListOrMap?
+    public var networks: ServiceNetworks?
     public var depends_on: DependsOn?
     public var labels: KeyValueMap?
     public var working_dir: String?
@@ -218,6 +218,14 @@ public enum DependsOn: Decodable, Sendable {
     public func condition(for name: String) -> String {
         if case .map(let m) = self, let c = m[name]?.condition { return c }
         return "service_started"
+    }
+
+    /// Whether a dependency must be present for the service to start. Compose
+    /// defaults to `true`; `required: false` lets the dependent start when the
+    /// dependency is disabled by profile or not selected.
+    public func isRequired(_ name: String) -> Bool {
+        if case .map(let m) = self, let r = m[name]?.required { return r }
+        return true
     }
 }
 

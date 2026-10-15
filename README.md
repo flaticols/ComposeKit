@@ -72,8 +72,10 @@ let order = try Planner.startOrder(project.file.services)     // dependency orde
 
 Services with a `profiles:` key are enabled only when one of their profiles is
 active — via the `profiles:` argument to `Project.load` or `COMPOSE_PROFILES`.
-Unprofiled services always run; dependencies of an enabled service are pulled in
-regardless. `Project.enabledServices(explicit:)` resolves the set.
+Unprofiled services always run. Dependencies of an enabled service are pulled in
+regardless of their own profile, except those declared with
+`depends_on: { name: { required: false } }`, which join only when their profile
+is active. `Project.enabledServices(explicit:)` resolves the set.
 
 ## Composition: extends & include
 

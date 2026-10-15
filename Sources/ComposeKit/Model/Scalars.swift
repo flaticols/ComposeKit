@@ -93,27 +93,44 @@ public enum KeyValueMap: Decodable, Sendable, Equatable {
     }
 }
 
-/// A name->config mapping or a plain list of names (e.g. a service's
-/// `networks:`). Only the set of names is needed for orchestration.
-public enum NameListOrMap: Decodable, Sendable, Equatable {
+/// A service's `networks:`: a plain list of names, or a mapping of name to
+/// per-network attachment options (`networks: { backend: { aliases: [db] } }`).
+public enum ServiceNetworks: Decodable, Sendable, Equatable {
     case list([String])
-    case map([String: AnyConfig])
+    case map([String: NetworkAttachment?])
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.singleValueContainer()
         if let arr = try? c.decode([String].self) {
             self = .list(arr)
         } else {
-            self = .map(try c.decode([String: AnyConfig].self))
+            self = .map(try c.decode([String: NetworkAttachment?].self))
         }
     }
 
+    /// Network names, in declaration order for the list form and sorted for the
+    /// map form.
     public var names: [String] {
         switch self {
         case .list(let a): return a
         case .map(let m): return m.keys.sorted()
         }
     }
+
+    /// Extra DNS names the service answers to on `network` (empty for the list
+    /// form or when none are declared).
+    public func aliases(on network: String) -> [String] {
+        if case .map(let m) = self, let aliases = m[network]??.aliases { return aliases }
+        return []
+    }
+}
+
+/// Per-network attachment options for a service (`networks.<name>`).
+public struct NetworkAttachment: Decodable, Sendable, Equatable {
+    public var aliases: [String]?
+    public var ipv4_address: String?
+    public var ipv6_address: String?
+    public var priority: Int?
 }
 
 /// Opaque, ignored sub-config. Lets us accept (and skip) the body of
